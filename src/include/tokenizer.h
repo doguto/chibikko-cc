@@ -23,6 +23,8 @@ struct Token {
 // 現在着目しているトークン
 Token *token;
 
+char *user_input;
+
 bool consume(char op) {
 	if (token->kind != TK_RESERVED || token->str[0] != op) {
 		return false;
@@ -33,13 +35,13 @@ bool consume(char op) {
 
 void expect(char op) {
 	if (token->kind != TK_RESERVED || token->str[0] != op) {
-		error("'%c'ではありません", op);
+		error_at(user_input, token->str, "'%c'ではありません", op);
 	}
 	token = token->next;
 }
 
 int expect_number(void) {
-	if (token->kind != TK_NUM) error("数ではありません");
+	if (token->kind != TK_NUM) error_at(user_input, token->str, "数ではありません");
 	int val = token->val;
 	token = token->next;
 	return val;
@@ -76,7 +78,7 @@ Token *tokenize(char *p) {
 			cur->val = strtol(p, &p, 10);
 			continue;
 		}
-		error("トークナイズできません");
+		error_at(user_input, token->str, "トークナイズできません");
 	}
 	new_token(TK_EOF, cur, p);
 	return head.next;

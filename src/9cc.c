@@ -16,6 +16,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
+	user_input = argv[1];
 	token = tokenize(argv[1]);
 
 
