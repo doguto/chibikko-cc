@@ -68,7 +68,7 @@ Token *tokenize(char *p) {
 			p++;
 			continue;
 		}
-		if (*p == '+' || *p == '-') {
+		if (*p == '+' || *p == '-' || *p == '*' || *p == '/' || *p == '(' || *p == ')') {
 			cur = new_token(TK_RESERVED, cur, p++);
 			continue;
 		}
@@ -78,7 +78,7 @@ Token *tokenize(char *p) {
 			cur->val = strtol(p, &p, 10);
 			continue;
 		}
-		error_at(user_input, token->str, "トークナイズできません");
+		error_at(user_input, p, "トークナイズできません");
 	}
 	new_token(TK_EOF, cur, p);
 	return head.next;

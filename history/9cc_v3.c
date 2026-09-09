@@ -8,8 +8,7 @@
 
 #include "include/utils.h"
 #include "include/tokenizer.h"
-#include "include/recursive_descent_parser.h"
-#include "include/generator.h"
+
 
 int main(int argc, char **argv) {
 	if (argc != 2) {
@@ -18,12 +17,7 @@ int main(int argc, char **argv) {
 	}
 
 	user_input = argv[1];
-
-	// トークナイズ
 	token = tokenize(argv[1]);
-	
-	// パース
-	Node *node = expr();
 
 
 	// Assembly Syntax の宣言
@@ -33,11 +27,18 @@ int main(int argc, char **argv) {
 
 	// main() 関数
 	printf("main:\n");
+	printf("	mov rax, %d\n", expect_number());
 
-	gen(node);
+	while(!at_eof()) {
+		if (consume('+')) {
+			printf("	add rax, %d\n", expect_number());
+			continue;
+		}
 
-	// 式全体の値がスタックに残っているので, これを返り値とする
-	printf("	pop rax\n");
+    expect('-');
+    printf("  sub rax, %d\n", expect_number());
+	}
+
 	printf("	ret\n");
 	
 	// Stackアドレスの実行の禁止
