@@ -82,6 +82,14 @@ Token *tokenize(char *p) {
       continue;
     }
 
+    // 識別子
+    // ここでは簡単のため、小文字1文字の識別子のみを認める
+    if ('a' <= *p && *p <= 'z') {
+      cur = cur->next = new_token(TK_IDENT, p, p + 1);
+      p++;
+      continue;
+    }
+
     // 整数リテラル
     if (isdigit(*p)) {
       cur = cur->next = new_token(TK_NUM, p, p);
@@ -94,7 +102,7 @@ Token *tokenize(char *p) {
     // 記号
     int punct_len = read_punct(p);
     if (punct_len) {
-      cur = cur->next = new_token(TK_PUNCT, p, p + punct_len);
+      cur = cur->next = new_token(TK_RESERVED, p, p + punct_len);
       p += cur->len;
       continue;
     }

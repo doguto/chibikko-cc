@@ -1,24 +1,33 @@
 # 文法
 
 ```c
-// 式: 等式で成り立つ
-expr = equality
+// プログラム: 文の並び
+program    = stmt*
 
-// 等式: 比較因子 と 比較演算子 で成り立つ
-equality = relational ("==" relational | "!=" relational)*
+// 文: 式の後にセミコロン
+stmt       = expr ";"
 
-// 比較因子: 加算因子 と 比較演算子 で成り立つ
+// 式: 代入式
+expr       = assign
+
+// 代入式: 左辺値と右辺値の等価性
+assign     = equality ("=" assign)?
+
+// 等価性: 比較演算子の連鎖
+equality   = relational ("==" relational | "!=" relational)*
+
+// 比較: 加算演算子の連鎖
 relational = add ("<" add | "<=" add | ">" add | ">=" add)*
 
-// 加算因子: 乗算因子 と 加減算演算子 で成り立つ
-add = mul ("+" mul | "-" mul)*
+// 加算: 乗算演算子の連鎖
+add        = mul ("+" mul | "-" mul)*
 
-// 乗算因子: 単項因子 と 乗除算演算子 で成り立つ
-mul = unary ("*" unary | "/" unary)*
+// 乗算: 単項演算子の連鎖
+mul        = unary ("*" unary | "/" unary)*
 
-// 単項因子: 単項演算子 と 単項因子 で成り立つ
-unary = ("+" | "-")? primary
+// 単項演算子: 正負の符号
+unary      = ("+" | "-")? primary
 
-// 単項演算子: 数値 と 括弧 で成り立つ
-primary = num | "(" expr ")"
+// 主要な式: 数値、識別子、括弧で囲まれた式
+primary    = num | ident | "(" expr ")"
 ```
