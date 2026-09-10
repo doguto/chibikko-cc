@@ -1,5 +1,5 @@
 # Chibikko CC
 
-**Original C-Lang Compiler **
+**Original C-Lang Compiler**
 
 Inspired by https://www.sigbus.info/compilerbook
