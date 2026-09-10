@@ -6,8 +6,14 @@
 // スタックに積まれている要素数
 static int depth;
 
-static void push(void) {
-  printf("  push %%rax\n");
+static void push(char *arg) {
+  printf("  push %s\n", arg);
+  depth++;
+}
+
+// 即値の push は 32bit までしか積めないことに注意する
+static void push_imm(int val) {
+  printf("  push %d\n", val);
   depth++;
 }
 
@@ -16,85 +22,113 @@ static void pop(char *arg) {
   depth--;
 }
 
-// 変数のアドレスを rax に置く
-static void gen_addr(Node *node) {
-  if (node->kind != ND_VAR)
-    error("not an lvalue");
-
-  int offset = (node->name - 'a' + 1) * 8;
-  printf("  lea %d(%%rbp), %%rax\n", -offset);
+static void add(char *to, char *from) {
+  printf("  add %s, %s\n", to, from);
 }
 
+static void sub(char *to, char *from) {
+  printf("  sub %s, %s\n", to, from);
+}
+
+static void sub_imm(char *to, int num) {
+  printf("  sub %s, %d\n", to, num);
+}
+
+static void mov(char *to, char *from) {
+  printf("  mov %s, %s\n", to, from);
+}
+
+// 変数のアドレスをスタックに積む
+static void gen_var(Node *node) {
+  if (node->kind != ND_VAR) error("代入の左辺値が変数ではありません");
+
+  int offset = (node->name - 'a' + 1) * 8;
+  mov("rax", "rbp");
+  sub_imm("rax", offset);
+  push("rax");
+}
+
+// 部分式の値をスタックに積んで返すスタックマシン方式で出力する
 static void gen_expr(Node *node) {
   switch (node->kind) {
   case ND_NUM:
-    printf("  mov $%d, %%rax\n", node->val);
+    push_imm(node->val);
     return;
   case ND_NEG:
     gen_expr(node->lhs);
-    printf("  neg %%rax\n");
+    pop("rax");
+    printf("  neg rax\n");
+    push("rax");
     return;
   case ND_VAR:
-    gen_addr(node);
-    printf("  mov (%%rax), %%rax\n");
+    // アドレスを求めてから, その指す先の値に置き換える
+    gen_var(node);
+    pop("rax");
+    mov("rax", "[rax]");
+    push("rax");
     return;
   case ND_ASSIGN:
-    // 左辺のアドレスを退避してから右辺の値を求め, そのアドレスに格納する
-    gen_addr(node->lhs);
-    push();
+    // 左辺のアドレスと右辺の値を積み, 代入式自体の値として右辺を残す
+    gen_var(node->lhs);
     gen_expr(node->rhs);
-    pop("%rdi");
-    printf("  mov %%rax, (%%rdi)\n");
+    pop("rdi");
+    pop("rax");
+    mov("[rax]", "rdi");
+    push("rdi");
     return;
   }
 
-  // 右辺を先に評価してスタックに退避し, 左辺を rax に置く
-  gen_expr(node->rhs);
-  push();
+  // 左辺, 右辺の順に積んでから取り出す
   gen_expr(node->lhs);
-  pop("%rdi");
+  gen_expr(node->rhs);
+  pop("rdi");
+  pop("rax");
 
   switch (node->kind) {
   case ND_ADD:
-    printf("  add %%rdi, %%rax\n");
-    return;
+    add("rax", "rdi");
+    break;
   case ND_SUB:
-    printf("  sub %%rdi, %%rax\n");
-    return;
+    sub("rax", "rdi");
+    break;
   case ND_MUL:
-    printf("  imul %%rdi, %%rax\n");
-    return;
+    printf("  imul rax, rdi\n");
+    break;
   case ND_DIV:
     // cqo: rax の値を 128bit に伸ばして rdx と rax に格納する
     // idiv: rdx と rax を合わせた 128bit 整数を引数のレジスタで割る
     printf("  cqo\n");
-    printf("  idiv %%rdi\n");
-    return;
+    printf("  idiv rdi\n");
+    break;
   case ND_EQ:
   case ND_NE:
   case ND_LT:
   case ND_LE:
-    printf("  cmp %%rdi, %%rax\n");
+    printf("  cmp rax, rdi\n");
 
     if (node->kind == ND_EQ)
-      printf("  sete %%al\n");
+      printf("  sete al\n");
     else if (node->kind == ND_NE)
-      printf("  setne %%al\n");
+      printf("  setne al\n");
     else if (node->kind == ND_LT)
-      printf("  setl %%al\n");
+      printf("  setl al\n");
     else if (node->kind == ND_LE)
-      printf("  setle %%al\n");
+      printf("  setle al\n");
 
-    printf("  movzb %%al, %%rax\n");
-    return;
+    printf("  movzx rax, al\n");
+    break;
+  default:
+    error("invalid expression");
   }
 
-  error("invalid expression");
+  push("rax");
 }
 
 static void gen_stmt(Node *node) {
   if (node->kind == ND_EXPR_STMT) {
+    // 式文の値は捨てる. 最後に取り出した値がそのまま main の戻り値になる
     gen_expr(node->lhs);
+    pop("rax");
     return;
   }
 
@@ -102,19 +136,21 @@ static void gen_stmt(Node *node) {
 }
 
 void codegen(Node *node) {
+  // レジスタの % 接頭辞を省いた Intel 記法で出力する
+  printf("  .intel_syntax noprefix\n");
   printf("  .globl main\n");
   printf("main:\n");
 
   // プロローグ: 呼び出し元の rbp を退避し, ローカル変数領域を確保する
-  printf("  push %%rbp\n");
-  printf("  mov %%rsp, %%rbp\n");
-  printf("  sub $%d, %%rsp\n", LOCAL_AREA_SIZE);
+  printf("  push rbp\n");
+  printf("  mov rbp, rsp\n");
+  printf("  sub rsp, %d\n", LOCAL_AREA_SIZE);
 
   // 未初期化の変数を読んだ場合の値を 0 に定める
-  printf("  mov $%d, %%rax\n", LOCAL_AREA_SIZE);
+  printf("  mov rax, %d\n", LOCAL_AREA_SIZE);
   printf(".L.init:\n");
-  printf("  sub $8, %%rax\n");
-  printf("  movq $0, (%%rsp,%%rax)\n");
+  printf("  sub rax, 8\n");
+  printf("  mov qword ptr [rsp+rax], 0\n");
   printf("  jne .L.init\n");
 
   // 最後の文の値がそのまま main の戻り値になる
@@ -124,8 +160,8 @@ void codegen(Node *node) {
   }
 
   // エピローグ: ローカル変数領域を解放し, rbp を復元する
-  printf("  mov %%rbp, %%rsp\n");
-  printf("  pop %%rbp\n");
+  printf("  mov rsp, rbp\n");
+  printf("  pop rbp\n");
   printf("  ret\n");
 
   // Stack アドレスの実行の禁止
