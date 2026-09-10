@@ -1,15 +1,24 @@
 # 文法
 
 ```c
-// 式: 項の加減が連なって成り立つ
-expr    = mul ("+" mul | "-" mul)*
+// 式: 等式で成り立つ
+expr = equality
 
-// 項: 因子の乗除が連なって成り立つ
-mul     = unary ("*" unary | "/" unary)*
+// 等式: 比較因子 と 比較演算子 で成り立つ
+equality = relational ("==" relational | "!=" relational)*
 
-// 因子: +- の単項演算子がつくかもしれない基本式
-unary   = ("+" | "-")? primary
+// 比較因子: 加算因子 と 比較演算子 で成り立つ
+relational = add ("<" add | "<=" add | ">" add | ">=" add)*
 
-// 基本式: 数字、もしくは括弧で囲まれた式
+// 加算因子: 乗算因子 と 加減算演算子 で成り立つ
+add = mul ("+" mul | "-" mul)*
+
+// 乗算因子: 単項因子 と 乗除算演算子 で成り立つ
+mul = unary ("*" unary | "/" unary)*
+
+// 単項因子: 単項演算子 と 単項因子 で成り立つ
+unary = ("+" | "-")? primary
+
+// 単項演算子: 数値 と 括弧 で成り立つ
 primary = num | "(" expr ")"
 ```

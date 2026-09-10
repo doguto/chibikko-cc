@@ -1,13 +1,17 @@
 CFLAGS=-std=c11 -g -static
+SRCDIR=src
+SRCS=$(wildcard $(SRCDIR)/*.c)
+OBJS=$(SRCS:.c=.o)
 
-9cc: src/9cc.c
-	cc -o 9cc src/9cc.c
+chibikko: $(OBJS)
+	$(CC) -o chibikko $(OBJS) $(LDFLAGS)
 
-test: 9cc
+$(OBJS): $(SRCDIR)/chibikko_cc.h
+
+test: chibikko
 	./test.sh
 
 clean:
-	rm -f 9cc *.o *~ tmp*
+	rm -f chibikko $(SRCDIR)/*.o *~ tmp*
 
 .PHONY: test clean
-

@@ -3,5 +3,5 @@
 *.o
 
 # 実行ファイル
-9cc 
+chibikko
 tmp 
