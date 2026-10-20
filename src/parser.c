@@ -12,6 +12,34 @@ static Node *mul(Token **rest, Token *tok);
 static Node *unary(Token **rest, Token *tok);
 static Node *primary(Token **rest, Token *tok);
 
+static Variable *find_lvar(Token *tok);
+static Variable *new_lvar(Token *tok);
+
+// ローカル変数のリスト
+Variable *locals;
+
+// 既に登録されているローカル変数を探す
+static Variable *find_lvar(Token *tok) {
+  for (Variable *var = locals; var; var = var->next) {
+    if (var->len == tok->len && !memcmp(tok->str, var->name, var->len)) {
+      return var;
+    }
+  }
+  return NULL;
+}
+
+// 新しいローカル変数を locals に登録する
+// rbp から下に向かって 8 バイトずつ場所を割り当てる
+static Variable *new_lvar(Token *tok) {
+  Variable *var = calloc(1, sizeof(Variable));
+  var->name = tok->str;
+  var->len = tok->len;
+  var->offset = (locals ? locals->offset : 0) + 8;
+  var->next = locals;
+  locals = var;
+  return var;
+}
+
 static Node *new_node(NodeKind kind) {
   Node *node = calloc(1, sizeof(Node));
   node->kind = kind;
@@ -37,9 +65,9 @@ static Node *new_num(int val) {
   return node;
 }
 
-static Node *new_var_node(char name) {
+static Node *new_var_node(int offset) {
   Node *node = new_node(ND_VAR);
-  node->name = name;
+  node->offset = offset;
   return node;
 }
 
@@ -177,11 +205,8 @@ static Node *mul(Token **rest, Token *tok) {
 // unary = ("+" | "-") unary
 //       | primary
 static Node *unary(Token **rest, Token *tok) {
-  if (equal(tok, "+"))
-    return unary(rest, tok->next);
-
-  if (equal(tok, "-"))
-    return new_unary(ND_NEG, unary(rest, tok->next));
+  if (equal(tok, "+")) return unary(rest, tok->next);
+  if (equal(tok, "-")) return new_unary(ND_NEG, unary(rest, tok->next));
 
   return primary(rest, tok);
 }
@@ -195,7 +220,11 @@ static Node *primary(Token **rest, Token *tok) {
   }
 
   if (tok->kind == TK_IDENT) {
-    Node *node = new_var_node(*tok->loc);
+    // 初出の変数はこの時点で確保する
+    Variable *var = find_lvar(tok);
+    if (!var) var = new_lvar(tok);
+
+    Node *node = new_var_node(var->offset);
     *rest = tok->next;
     return node;
   }

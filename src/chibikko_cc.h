@@ -26,6 +26,7 @@ struct Token {
   TokenKind kind; // トークンの種類
   Token *next;    // 次のトークン
   int val;        // kind が TK_NUM の場合, その値
+  char *str;      // トークン文字列 (NUL 終端)
   char *loc;      // トークンの位置
   int len;        // トークンの長さ
 };
@@ -64,9 +65,19 @@ struct Node {
   Node *next;    // 次の文
   Node *lhs;     // 左辺
   Node *rhs;     // 右辺
-  char name;     // kind == ND_VAR の場合に使用
+  int offset;    // kind == ND_VAR の場合に使用. rbp からのオフセット
   int val;       // kind == ND_NUM の場合に使用
 };
+
+typedef struct Variable Variable;
+struct Variable {
+  Variable *next;
+  char *name;
+  int len;
+  int offset;
+};
+
+extern Variable *locals;
 
 Node *parse(Token *tok);
 

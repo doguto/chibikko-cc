@@ -1,6 +1,6 @@
 #include "chibikko_cc.h"
 
-// ローカル変数は 'a' から 'z' の 26 個を rbp からの固定オフセットに配置する
+// 識別子は小文字 1 文字なので, ローカル変数は最大 26 個にしかならない
 #define LOCAL_AREA_SIZE (26 * 8)
 
 // スタックに積まれている要素数
@@ -42,9 +42,8 @@ static void mov(char *to, char *from) {
 static void gen_var(Node *node) {
   if (node->kind != ND_VAR) error("代入の左辺値が変数ではありません");
 
-  int offset = (node->name - 'a' + 1) * 8;
   mov("rax", "rbp");
-  sub_imm("rax", offset);
+  sub_imm("rax", node->offset);
   push("rax");
 }
 

@@ -53,6 +53,8 @@ static Token *new_token(TokenKind kind, char *start, char *end) {
   tok->kind = kind;
   tok->loc = start;
   tok->len = end - start;
+  tok->str = calloc(tok->len + 1, sizeof(char)); // calloc なので NUL 終端される
+  memcpy(tok->str, start, tok->len);
   return tok;
 }
 
@@ -92,10 +94,10 @@ Token *tokenize(char *p) {
 
     // 整数リテラル
     if (isdigit(*p)) {
-      cur = cur->next = new_token(TK_NUM, p, p);
       char *q = p;
-      cur->val = strtoul(p, &p, 10);
-      cur->len = p - q;
+      int val = strtoul(p, &p, 10);
+      cur = cur->next = new_token(TK_NUM, q, p);
+      cur->val = val;
       continue;
     }
 
