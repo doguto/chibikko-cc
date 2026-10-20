@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Chibikko.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Chibikko.Tests/Chibikko.Tests.csproj" />
+  </Folder>
+</Solution>
