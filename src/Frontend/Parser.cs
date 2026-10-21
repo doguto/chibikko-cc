@@ -12,7 +12,7 @@ public sealed class Parser(Lexer lexer)
     TranslationUnit TranslationUnit()
     {
         var functions = new List<FunctionDeclaration>();
-        while (tokens.Peek().Kind != TokenKind.EndOfFile)
+        while (tokens.Peek().Kind is not TokenKind.EndOfFile)
         {
             functions.Add(Function());
         }
@@ -25,7 +25,7 @@ public sealed class Parser(Lexer lexer)
         var returnType = Type();
         var name = tokens.Expect(TokenKind.Identifier);
         tokens.Expect(TokenKind.LeftParen);
-        List<ParameterDeclaration> parameters = tokens.Peek().Kind == TokenKind.RightParen ? [] : Parameters();
+        List<ParameterDeclaration> parameters = tokens.Peek().Kind is TokenKind.RightParen ? [] : Parameters();
         tokens.Expect(TokenKind.RightParen);
         return new FunctionDeclaration(returnType, name, parameters, Block());
     }
@@ -47,7 +47,7 @@ public sealed class Parser(Lexer lexer)
     {
         tokens.Expect(TokenKind.LeftBrace);
         var statements = new List<Statement>();
-        while (tokens.Peek().Kind != TokenKind.RightBrace)
+        while (tokens.Peek().Kind is not TokenKind.RightBrace)
         {
             statements.Add(Statement());
         }
@@ -72,7 +72,7 @@ public sealed class Parser(Lexer lexer)
             case TokenKind.ReturnKeyword:
             {
                 tokens.Consume();
-                var value = tokens.Peek().Kind == TokenKind.Semicolon ? null : Expression();
+                var value = tokens.Peek().Kind is TokenKind.Semicolon ? null : Expression();
                 tokens.Expect(TokenKind.Semicolon);
                 return new ReturnStatement(token, value);
             }
@@ -124,7 +124,7 @@ public sealed class Parser(Lexer lexer)
         Statement? elseBranch = null;
         if (TryConsume(TokenKind.ElseKeyword))
         {
-            elseBranch = tokens.Peek().Kind == TokenKind.IfKeyword ? IfStatement() : Block();
+            elseBranch = tokens.Peek().Kind is TokenKind.IfKeyword ? IfStatement() : Block();
         }
         return new IfStatement(keyword, condition, then, elseBranch);
     }
@@ -145,7 +145,7 @@ public sealed class Parser(Lexer lexer)
     Expression Assignment()
     {
         // 2 つ先まで見て、代入か式かを決める
-        if (tokens.Peek().Kind == TokenKind.Identifier && tokens.Peek(1).Kind == TokenKind.Assign)
+        if (tokens.Peek().Kind is TokenKind.Identifier && tokens.Peek(1).Kind is TokenKind.Assign)
         {
             var target = new DeclarationReferenceExpression(tokens.Consume());
             var operatorToken = tokens.Consume();
@@ -200,7 +200,7 @@ public sealed class Parser(Lexer lexer)
                 {
                     return new DeclarationReferenceExpression(token);
                 }
-                List<Expression> arguments = tokens.Peek().Kind == TokenKind.RightParen ? [] : Arguments();
+                List<Expression> arguments = tokens.Peek().Kind is TokenKind.RightParen ? [] : Arguments();
                 tokens.Expect(TokenKind.RightParen);
                 return new CallExpression(token, arguments);
             }
