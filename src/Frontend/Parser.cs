@@ -166,14 +166,14 @@ public sealed class Parser(Lexer lexer)
     // mul ::= unary (("*" | "/") unary)*
     Expr Mul() => LeftAssoc(Unary, TokenKind.Star, TokenKind.Slash);
 
-    // unary ::= ("+" | "-")? primary
+    // unary ::= ("+" | "-") unary | primary
     Expr Unary()
     {
         var kind = tokens.Peek().Kind;
         if (kind is TokenKind.Plus or TokenKind.Minus)
         {
             var op = tokens.Consume();
-            return new UnaryExpr(op, Primary());
+            return new UnaryExpr(op, Unary());
         }
         return Primary();
     }
