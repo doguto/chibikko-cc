@@ -31,7 +31,7 @@ public sealed class Lexer(string source)
         SkipWhitespaceAndComments();
 
         var current = Peek();
-        if (current == '\0')
+        if (current is '\0')
         {
             return new Token(TokenKind.EndOfFile, position, 0);
         }
@@ -43,7 +43,7 @@ public sealed class Lexer(string source)
         {
             return LexIdentifierOrKeyword();
         }
-        if (current == '\'')
+        if (current is '\'')
         {
             return LexCharacterLiteral();
         }
@@ -58,20 +58,20 @@ public sealed class Lexer(string source)
             {
                 position++;
             }
-            else if (Peek() == '/' && Peek(1) == '/')
+            else if ((Peek(), Peek(1)) is ('/', '/'))
             {
                 while (Peek() is not ('\n' or '\0'))
                 {
                     position++;
                 }
             }
-            else if (Peek() == '/' && Peek(1) == '*')
+            else if ((Peek(), Peek(1)) is ('/', '*'))
             {
                 var start = position;
                 position += 2;
-                while (!(Peek() == '*' && Peek(1) == '/'))
+                while ((Peek(), Peek(1)) is not ('*', '/'))
                 {
-                    if (Peek() == '\0')
+                    if (Peek() is '\0')
                     {
                         throw new CompileException("unterminated comment", start);
                     }
@@ -93,7 +93,7 @@ public sealed class Lexer(string source)
         var start = position;
         SkipDigits();
 
-        if (Peek() == '.' && char.IsAsciiDigit(Peek(1)))
+        if (Peek() is '.' && char.IsAsciiDigit(Peek(1)))
         {
             position++;
             SkipDigits();
@@ -129,7 +129,7 @@ public sealed class Lexer(string source)
         var start = position;
         position++;
 
-        if (Peek() == '\\')
+        if (Peek() is '\\')
         {
             position++;
             if (Peek() is not ('n' or 'r' or 't' or '0' or '\\' or '\''))
@@ -147,7 +147,7 @@ public sealed class Lexer(string source)
             position++;
         }
 
-        if (Peek() != '\'')
+        if (Peek() is not '\'')
         {
             throw new CompileException("unterminated character literal", start);
         }
@@ -159,45 +159,31 @@ public sealed class Lexer(string source)
     {
         var start = position;
 
-        // 2 文字の演算子を先に判定する(最長一致)
-        TokenKind? twoCharacter = (Peek(), Peek(1)) switch
+        // 2 文字の演算子を先に並べる(最長一致)
+        var (kind, length) = (Peek(), Peek(1)) switch
         {
-            ('=', '=') => TokenKind.EqualEqual,
-            ('!', '=') => TokenKind.NotEqual,
-            ('<', '=') => TokenKind.LessEqual,
-            ('>', '=') => TokenKind.GreaterEqual,
-            _ => null,
+            ('=', '=') => (TokenKind.EqualEqual, 2),
+            ('!', '=') => (TokenKind.NotEqual, 2),
+            ('<', '=') => (TokenKind.LessEqual, 2),
+            ('>', '=') => (TokenKind.GreaterEqual, 2),
+            ('(', _) => (TokenKind.LeftParen, 1),
+            (')', _) => (TokenKind.RightParen, 1),
+            ('{', _) => (TokenKind.LeftBrace, 1),
+            ('}', _) => (TokenKind.RightBrace, 1),
+            (';', _) => (TokenKind.Semicolon, 1),
+            (',', _) => (TokenKind.Comma, 1),
+            ('+', _) => (TokenKind.Plus, 1),
+            ('-', _) => (TokenKind.Minus, 1),
+            ('*', _) => (TokenKind.Star, 1),
+            ('/', _) => (TokenKind.Slash, 1),
+            ('<', _) => (TokenKind.Less, 1),
+            ('>', _) => (TokenKind.Greater, 1),
+            ('=', _) => (TokenKind.Assign, 1),
+            _ => throw new CompileException($"unexpected character '{Peek()}'", start),
         };
-        if (twoCharacter is { } twoCharacterKind)
-        {
-            position += 2;
-            return MakeToken(twoCharacterKind, start);
-        }
 
-        TokenKind? oneCharacter = Peek() switch
-        {
-            '(' => TokenKind.LeftParen,
-            ')' => TokenKind.RightParen,
-            '{' => TokenKind.LeftBrace,
-            '}' => TokenKind.RightBrace,
-            ';' => TokenKind.Semicolon,
-            ',' => TokenKind.Comma,
-            '+' => TokenKind.Plus,
-            '-' => TokenKind.Minus,
-            '*' => TokenKind.Star,
-            '/' => TokenKind.Slash,
-            '<' => TokenKind.Less,
-            '>' => TokenKind.Greater,
-            '=' => TokenKind.Assign,
-            _ => null,
-        };
-        if (oneCharacter is { } oneCharacterKind)
-        {
-            position++;
-            return MakeToken(oneCharacterKind, start);
-        }
-
-        throw new CompileException($"unexpected character '{Peek()}'", start);
+        position += length;
+        return MakeToken(kind, start);
     }
 
     void SkipDigits()
@@ -210,7 +196,7 @@ public sealed class Lexer(string source)
 
     Token MakeToken(TokenKind kind, int start) => new(kind, start, position - start);
 
-    static bool IsIdentifierStart(char character) => char.IsAsciiLetter(character) || character == '_';
+    static bool IsIdentifierStart(char character) => char.IsAsciiLetter(character) || character is '_';
 
     char Peek(int offset = 0) => position + offset < source.Length ? source[position + offset] : '\0';
 }
