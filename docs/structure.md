@@ -25,8 +25,8 @@ chibikko-cc/
 │   │   ├── Lexer.cs                # ソース → Token(逐次)
 │   │   ├── TokenStream.cs          # Lexer の先読みバッファ(Peek / Consume / Expect)
 │   │   ├── Ast.cs                  # AST ノード
-│   │   ├── Parser.cs               # Token → AST(grammar.md と 1:1)
-│   │   ├── SemanticAnalyzer.cs     # 型付け、スコープ解決、シグネチャ検査
+│   │   ├── Parser.cs               # Token → 型付き AST(grammar.md と 1:1、SemanticAnalyzer を呼ぶ)
+│   │   ├── SemanticAnalyzer.cs     # ActOn*: 型付け、スコープ解決、シグネチャ検査
 │   │   ├── IrGenerator.cs          # 型付き AST → IR
 │   │   └── FrontendPipeline.cs     # Lexer から IrGenerator までの接続
 │   ├── Optimizer/
@@ -55,8 +55,7 @@ chibikko-cc/
 | 段階 | 入力 | 出力 |
 |------|------|------|
 | Lexer | ソース文字列 | Token(逐次) |
-| Parser | Token(逐次) | AST(型なし) |
-| SemanticAnalyzer | AST | 型付き AST |
+| Parser + SemanticAnalyzer | Token(逐次) | 型付き AST |
 | IrGenerator | 型付き AST | IR |
 | Optimizer | IR | IR |
 | CodeGenerator | IR | x86-64 アセンブリ |
@@ -77,8 +76,9 @@ Program → Compiler(Interface)
 
 - Token は種別とソース上の位置(Offset, Length)だけを持つ。リテラルの値変換とサフィックス判定は後段で行う(Clang の方式)。
 - Parser は `Lexer.Lex()` で Token を 1 つずつ取得する。Token 列を事前に作らない(Clang の方式)。先読みのバッファは `TokenStream` が持ち、Parser はそれを介して Token を読む。Token 列をまとめて得る `Tokenize()` はテスト側の拡張メソッド(`tests/Chibikko.Tests/Frontend/LexerExtensions.cs`)とする。
-- Parser は構文木を作るだけで、型の判断をしない。型の判断は SemanticAnalyzer が行う。
-- 暗黙の型変換は IrGenerator で明示的な IR 命令に変換する。Backend は暗黙変換を扱わない。
+- Parser は構文を読み、構文要素ごとに SemanticAnalyzer の `ActOn*` を呼んでノードを受け取る(Clang の `Parser` と `Sema` の関係)。型の判断は SemanticAnalyzer だけが行い、Parser は型を見ない。
+- 解析は 1 パスなので、関数は呼び出しより前に定義する必要がある(C と同じ)。再帰呼び出しは本体を読む前にシグネチャを登録して許す。
+- 暗黙の型変換は SemanticAnalyzer が `ImplicitCastExpression` として AST に挿入し(Clang の `ImplicitCastExpr`)、IrGenerator が `convert` 命令に変換する。Backend は暗黙変換を扱わない。
 - IR は関数ごとの基本ブロックと 3 番地コードとする。値は型付き(`i1` `i32` `i64` `f32` `f64`)とする。
 - 最初はローカル変数をスタックスロットとして扱う。SSA 化は必要になった時点で Pass として追加する。
 
