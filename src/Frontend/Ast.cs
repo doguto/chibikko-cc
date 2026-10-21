@@ -1,48 +1,48 @@
 namespace Chibikko.Frontend;
 
 // AST は Token をそのまま保持する。識別子名やリテラルの値はソースの綴りから後段で取り出す。
-// ノード名は Clang に倣う(DeclRefExpr, CallExpr など)。
+// ノード名は Clang に倣う(DeclarationReferenceExpression, CallExpression など)。
 
-public sealed record TranslationUnit(List<FunctionDecl> Functions);
+public sealed record TranslationUnit(List<FunctionDeclaration> Functions);
 
-public sealed record FunctionDecl(Token ReturnType, Token Name, List<ParamDecl> Params, Block Body);
+public sealed record FunctionDeclaration(Token ReturnType, Token Name, List<ParameterDeclaration> Parameters, Block Body);
 
-public sealed record ParamDecl(Token Type, Token Name);
+public sealed record ParameterDeclaration(Token Type, Token Name);
 
 // ---- 文 ----
 
-public abstract record Stmt;
+public abstract record Statement;
 
 // Clang の CompoundStmt に相当する
-public sealed record Block(List<Stmt> Stmts) : Stmt;
+public sealed record Block(List<Statement> Statements) : Statement;
 
-public sealed record DeclStmt(Token Type, Token Name, Expr? Init) : Stmt;
+public sealed record DeclarationStatement(Token Type, Token Name, Expression? Initializer) : Statement;
 
-public sealed record ReturnStmt(Token Keyword, Expr? Value) : Stmt;
+public sealed record ReturnStatement(Token Keyword, Expression? Value) : Statement;
 
-public sealed record ExprStmt(Expr Expr) : Stmt;
+public sealed record ExpressionStatement(Expression Expression) : Statement;
 
-// Else は Block か、else if の場合は IfStmt
-public sealed record IfStmt(Token Keyword, Expr Cond, Block Then, Stmt? Else) : Stmt;
+// Else は Block か、else if の場合は IfStatement
+public sealed record IfStatement(Token Keyword, Expression Condition, Block Then, Statement? Else) : Statement;
 
-public sealed record WhileStmt(Token Keyword, Expr Cond, Block Body) : Stmt;
+public sealed record WhileStatement(Token Keyword, Expression Condition, Block Body) : Statement;
 
-public sealed record ForStmt(Token Keyword, Expr? Init, Expr? Cond, Expr? Step, Block Body) : Stmt;
+public sealed record ForStatement(Token Keyword, Expression? Initializer, Expression? Condition, Expression? Step, Block Body) : Statement;
 
 // ---- 式 ----
 
-public abstract record Expr;
+public abstract record Expression;
 
 // 整数・浮動小数点・文字・真偽値。種別は Token.Kind で区別する
-public sealed record LiteralExpr(Token Token) : Expr;
+public sealed record LiteralExpression(Token Token) : Expression;
 
 // 変数の参照
-public sealed record DeclRefExpr(Token Name) : Expr;
+public sealed record DeclarationReferenceExpression(Token Name) : Expression;
 
-public sealed record CallExpr(Token Callee, List<Expr> Args) : Expr;
+public sealed record CallExpression(Token Callee, List<Expression> Arguments) : Expression;
 
-public sealed record UnaryExpr(Token Op, Expr Operand) : Expr;
+public sealed record UnaryExpression(Token Operator, Expression Operand) : Expression;
 
-public sealed record BinaryExpr(Token Op, Expr Lhs, Expr Rhs) : Expr;
+public sealed record BinaryExpression(Token Operator, Expression Left, Expression Right) : Expression;
 
-public sealed record AssignExpr(DeclRefExpr Target, Token Op, Expr Value) : Expr;
+public sealed record AssignmentExpression(DeclarationReferenceExpression Target, Token Operator, Expression Value) : Expression;

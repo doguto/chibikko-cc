@@ -6,53 +6,53 @@ public sealed class Parser(Lexer lexer)
 {
     readonly TokenStream tokens = new(lexer);
 
-    public TranslationUnit Parse() => TranslationUnit();
+    public TranslationUnit Parse() => ParseTranslationUnit();
 
     // translationUnit ::= function*
-    TranslationUnit TranslationUnit()
+    TranslationUnit ParseTranslationUnit()
     {
-        var functions = new List<FunctionDecl>();
+        var functions = new List<FunctionDeclaration>();
         while (tokens.Peek().Kind != TokenKind.EndOfFile)
         {
-            functions.Add(Function());
+            functions.Add(ParseFunction());
         }
         return new TranslationUnit(functions);
     }
 
     // function ::= type identifier "(" params? ")" block
-    FunctionDecl Function()
+    FunctionDeclaration ParseFunction()
     {
-        var returnType = Type();
+        var returnType = ParseType();
         var name = tokens.Expect(TokenKind.Identifier);
         tokens.Expect(TokenKind.LeftParen);
-        List<ParamDecl> parameters = tokens.Peek().Kind == TokenKind.RightParen ? [] : Params();
+        List<ParameterDeclaration> parameters = tokens.Peek().Kind == TokenKind.RightParen ? [] : ParseParameters();
         tokens.Expect(TokenKind.RightParen);
-        return new FunctionDecl(returnType, name, parameters, Block());
+        return new FunctionDeclaration(returnType, name, parameters, ParseBlock());
     }
 
     // params ::= type identifier ("," type identifier)*
-    List<ParamDecl> Params()
+    List<ParameterDeclaration> ParseParameters()
     {
-        var parameters = new List<ParamDecl>();
+        var parameters = new List<ParameterDeclaration>();
         do
         {
-            var type = Type();
-            parameters.Add(new ParamDecl(type, tokens.Expect(TokenKind.Identifier)));
+            var type = ParseType();
+            parameters.Add(new ParameterDeclaration(type, tokens.Expect(TokenKind.Identifier)));
         } while (TryConsume(TokenKind.Comma));
         return parameters;
     }
 
     // block ::= "{" statement* "}"
-    Block Block()
+    Block ParseBlock()
     {
         tokens.Expect(TokenKind.LeftBrace);
-        var stmts = new List<Stmt>();
+        var statements = new List<Statement>();
         while (tokens.Peek().Kind != TokenKind.RightBrace)
         {
-            stmts.Add(Statement());
+            statements.Add(ParseStatement());
         }
         tokens.Expect(TokenKind.RightBrace);
-        return new Block(stmts);
+        return new Block(statements);
     }
 
     // statement ::= declaration ";"
@@ -61,127 +61,127 @@ public sealed class Parser(Lexer lexer)
     //             | ifStmt
     //             | "while" "(" expression ")" block
     //             | "for" "(" expression? ";" expression? ";" expression? ")" block
-    Stmt Statement()
+    Statement ParseStatement()
     {
         var token = tokens.Peek();
         switch (token.Kind)
         {
             case TokenKind.IfKeyword:
-                return IfStmt();
+                return ParseIfStatement();
 
             case TokenKind.ReturnKeyword:
             {
                 tokens.Consume();
-                var value = tokens.Peek().Kind == TokenKind.Semicolon ? null : Expression();
+                var value = tokens.Peek().Kind == TokenKind.Semicolon ? null : ParseExpression();
                 tokens.Expect(TokenKind.Semicolon);
-                return new ReturnStmt(token, value);
+                return new ReturnStatement(token, value);
             }
 
             case TokenKind.WhileKeyword:
             {
                 tokens.Consume();
                 tokens.Expect(TokenKind.LeftParen);
-                var cond = Expression();
+                var condition = ParseExpression();
                 tokens.Expect(TokenKind.RightParen);
-                return new WhileStmt(token, cond, Block());
+                return new WhileStatement(token, condition, ParseBlock());
             }
 
             case TokenKind.ForKeyword:
             {
                 tokens.Consume();
                 tokens.Expect(TokenKind.LeftParen);
-                var init = OptionalExpression(TokenKind.Semicolon);
+                var initializer = ParseOptionalExpression(TokenKind.Semicolon);
                 tokens.Expect(TokenKind.Semicolon);
-                var cond = OptionalExpression(TokenKind.Semicolon);
+                var condition = ParseOptionalExpression(TokenKind.Semicolon);
                 tokens.Expect(TokenKind.Semicolon);
-                var step = OptionalExpression(TokenKind.RightParen);
+                var step = ParseOptionalExpression(TokenKind.RightParen);
                 tokens.Expect(TokenKind.RightParen);
-                return new ForStmt(token, init, cond, step, Block());
+                return new ForStatement(token, initializer, condition, step, ParseBlock());
             }
         }
 
         if (IsTypeKeyword(token.Kind))
         {
-            var decl = Declaration();
+            var declaration = ParseDeclaration();
             tokens.Expect(TokenKind.Semicolon);
-            return decl;
+            return declaration;
         }
 
-        var expr = Expression();
+        var expression = ParseExpression();
         tokens.Expect(TokenKind.Semicolon);
-        return new ExprStmt(expr);
+        return new ExpressionStatement(expression);
     }
 
     // ifStmt ::= "if" "(" expression ")" block ("else" (ifStmt | block))?
-    Stmt IfStmt()
+    Statement ParseIfStatement()
     {
         var keyword = tokens.Expect(TokenKind.IfKeyword);
         tokens.Expect(TokenKind.LeftParen);
-        var cond = Expression();
+        var condition = ParseExpression();
         tokens.Expect(TokenKind.RightParen);
-        var then = Block();
+        var then = ParseBlock();
 
-        Stmt? @else = null;
+        Statement? @else = null;
         if (TryConsume(TokenKind.ElseKeyword))
         {
-            @else = tokens.Peek().Kind == TokenKind.IfKeyword ? IfStmt() : Block();
+            @else = tokens.Peek().Kind == TokenKind.IfKeyword ? ParseIfStatement() : ParseBlock();
         }
-        return new IfStmt(keyword, cond, then, @else);
+        return new IfStatement(keyword, condition, then, @else);
     }
 
     // declaration ::= type identifier ("=" expression)?
-    Stmt Declaration()
+    Statement ParseDeclaration()
     {
-        var type = Type();
+        var type = ParseType();
         var name = tokens.Expect(TokenKind.Identifier);
-        var init = TryConsume(TokenKind.Assign) ? Expression() : null;
-        return new DeclStmt(type, name, init);
+        var initializer = TryConsume(TokenKind.Assign) ? ParseExpression() : null;
+        return new DeclarationStatement(type, name, initializer);
     }
 
     // expression ::= assign
-    Expr Expression() => Assign();
+    Expression ParseExpression() => ParseAssignment();
 
     // assign ::= identifier "=" assign | equality
-    Expr Assign()
+    Expression ParseAssignment()
     {
         // 2 つ先まで見て、代入か式かを決める
         if (tokens.Peek().Kind == TokenKind.Identifier && tokens.Peek(1).Kind == TokenKind.Assign)
         {
-            var target = new DeclRefExpr(tokens.Consume());
-            var op = tokens.Consume();
-            return new AssignExpr(target, op, Assign());
+            var target = new DeclarationReferenceExpression(tokens.Consume());
+            var @operator = tokens.Consume();
+            return new AssignmentExpression(target, @operator, ParseAssignment());
         }
-        return Equality();
+        return ParseEquality();
     }
 
     // equality ::= relational (("==" | "!=") relational)*
-    Expr Equality() => LeftAssoc(Relational, TokenKind.EqualEqual, TokenKind.NotEqual);
+    Expression ParseEquality() => ParseLeftAssociative(ParseRelational, TokenKind.EqualEqual, TokenKind.NotEqual);
 
     // relational ::= add (("<=" | ">=" | "<" | ">") add)*
-    Expr Relational() => LeftAssoc(Add, TokenKind.LessEqual, TokenKind.GreaterEqual, TokenKind.Less, TokenKind.Greater);
+    Expression ParseRelational() => ParseLeftAssociative(ParseAdditive, TokenKind.LessEqual, TokenKind.GreaterEqual, TokenKind.Less, TokenKind.Greater);
 
     // add ::= mul (("+" | "-") mul)*
-    Expr Add() => LeftAssoc(Mul, TokenKind.Plus, TokenKind.Minus);
+    Expression ParseAdditive() => ParseLeftAssociative(ParseMultiplicative, TokenKind.Plus, TokenKind.Minus);
 
     // mul ::= unary (("*" | "/") unary)*
-    Expr Mul() => LeftAssoc(Unary, TokenKind.Star, TokenKind.Slash);
+    Expression ParseMultiplicative() => ParseLeftAssociative(ParseUnary, TokenKind.Star, TokenKind.Slash);
 
     // unary ::= ("+" | "-") unary | primary
-    Expr Unary()
+    Expression ParseUnary()
     {
         var kind = tokens.Peek().Kind;
         if (kind is TokenKind.Plus or TokenKind.Minus)
         {
-            var op = tokens.Consume();
-            return new UnaryExpr(op, Unary());
+            var @operator = tokens.Consume();
+            return new UnaryExpression(@operator, ParseUnary());
         }
-        return Primary();
+        return ParsePrimary();
     }
 
     // primary ::= literal
-    //           | identifier ("(" args? ")")?
+    //           | identifier ("(" arguments? ")")?
     //           | "(" expression ")"
-    Expr Primary()
+    Expression ParsePrimary()
     {
         var token = tokens.Peek();
         switch (token.Kind)
@@ -191,26 +191,26 @@ public sealed class Parser(Lexer lexer)
             case TokenKind.CharLiteral:
             case TokenKind.TrueKeyword:
             case TokenKind.FalseKeyword:
-                return new LiteralExpr(tokens.Consume());
+                return new LiteralExpression(tokens.Consume());
 
             case TokenKind.Identifier:
             {
                 tokens.Consume();
                 if (!TryConsume(TokenKind.LeftParen))
                 {
-                    return new DeclRefExpr(token);
+                    return new DeclarationReferenceExpression(token);
                 }
-                List<Expr> args = tokens.Peek().Kind == TokenKind.RightParen ? [] : Args();
+                List<Expression> arguments = tokens.Peek().Kind == TokenKind.RightParen ? [] : ParseArguments();
                 tokens.Expect(TokenKind.RightParen);
-                return new CallExpr(token, args);
+                return new CallExpression(token, arguments);
             }
 
             case TokenKind.LeftParen:
             {
                 tokens.Consume();
-                var expr = Expression();
+                var expression = ParseExpression();
                 tokens.Expect(TokenKind.RightParen);
-                return expr;
+                return expression;
             }
 
             default:
@@ -218,19 +218,19 @@ public sealed class Parser(Lexer lexer)
         }
     }
 
-    // args ::= expression ("," expression)*
-    List<Expr> Args()
+    // arguments ::= expression ("," expression)*
+    List<Expression> ParseArguments()
     {
-        var args = new List<Expr>();
+        var arguments = new List<Expression>();
         do
         {
-            args.Add(Expression());
+            arguments.Add(ParseExpression());
         } while (TryConsume(TokenKind.Comma));
-        return args;
+        return arguments;
     }
 
     // type ::= "int" | "long" | "void" | "bool" | "char" | "float" | "double"
-    Token Type()
+    Token ParseType()
     {
         var token = tokens.Peek();
         if (!IsTypeKeyword(token.Kind))
@@ -242,21 +242,21 @@ public sealed class Parser(Lexer lexer)
 
     // ---- 補助 ----
 
-    // 左結合の二項演算: next (op next)*
-    Expr LeftAssoc(Func<Expr> next, params TokenKind[] ops)
+    // 左結合の二項演算: parseOperand (@operator parseOperand)*
+    Expression ParseLeftAssociative(Func<Expression> parseOperand, params TokenKind[] operators)
     {
-        var lhs = next();
-        while (ops.Contains(tokens.Peek().Kind))
+        var left = parseOperand();
+        while (operators.Contains(tokens.Peek().Kind))
         {
-            var op = tokens.Consume();
-            lhs = new BinaryExpr(op, lhs, next());
+            var @operator = tokens.Consume();
+            left = new BinaryExpression(@operator, left, parseOperand());
         }
-        return lhs;
+        return left;
     }
 
     // for の各節のように、終端 Token が来たら省略とみなす式
-    Expr? OptionalExpression(TokenKind terminator) =>
-        tokens.Peek().Kind == terminator ? null : Expression();
+    Expression? ParseOptionalExpression(TokenKind terminator) =>
+        tokens.Peek().Kind == terminator ? null : ParseExpression();
 
     bool TryConsume(TokenKind kind)
     {
