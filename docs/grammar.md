@@ -1,7 +1,7 @@
 # 文法定義
 
 ```ebnf
-program    ::= function*
+translationUnit ::= function*
 
 function   ::= type identifier "(" params? ")" block
 params     ::= type identifier ("," type identifier)*
