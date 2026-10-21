@@ -6,7 +6,10 @@ public sealed class FrontendPipeline : IFrontendPipeline
 {
     public Module Run(string source)
     {
-        // Lexer -> Parser -> SemanticAnalyzer -> IrGenerator
-        throw new NotImplementedException("frontend");
+        var syntax = new Parser(new Lexer(source)).Parse();
+        var analyzed = new SemanticAnalyzer(source).Analyze(syntax);
+
+        // analyzed -> IrGenerator
+        throw new NotImplementedException("IrGenerator");
     }
 }
