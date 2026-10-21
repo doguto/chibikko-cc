@@ -2,9 +2,11 @@ using Chibikko.Common;
 
 namespace Chibikko.Frontend;
 
-public sealed class Parser(Lexer lexer)
+// 構文要素を読むたびに SemanticAnalyzer の ActOn* を呼び、型付きのノードを受け取る(Clang の Parser と Sema の関係)
+public sealed class Parser(Lexer lexer, SemanticAnalyzer semanticAnalyzer)
 {
     readonly TokenStream tokens = new(lexer);
+    readonly SemanticAnalyzer semanticAnalyzer = semanticAnalyzer;
 
     public TranslationUnit Parse() => TranslationUnit();
 
@@ -16,7 +18,7 @@ public sealed class Parser(Lexer lexer)
         {
             functions.Add(Function());
         }
-        return new TranslationUnit(functions);
+        return semanticAnalyzer.ActOnTranslationUnit(functions);
     }
 
     // function ::= type identifier "(" params? ")" block
@@ -27,7 +29,8 @@ public sealed class Parser(Lexer lexer)
         tokens.Expect(TokenKind.LeftParen);
         List<ParameterDeclaration> parameters = tokens.Peek().Kind is TokenKind.RightParen ? [] : Parameters();
         tokens.Expect(TokenKind.RightParen);
-        return new FunctionDeclaration(returnType, name, parameters, Block());
+        var signature = semanticAnalyzer.ActOnStartOfFunctionDefinition(returnType, name, parameters);
+        return semanticAnalyzer.ActOnFinishFunctionBody(signature, Block());
     }
 
     // params ::= type identifier ("," type identifier)*
@@ -37,7 +40,7 @@ public sealed class Parser(Lexer lexer)
         do
         {
             var type = Type();
-            parameters.Add(new ParameterDeclaration(type, tokens.Expect(TokenKind.Identifier)));
+            parameters.Add(semanticAnalyzer.ActOnParameterDeclaration(type, tokens.Expect(TokenKind.Identifier)));
         } while (TryConsume(TokenKind.Comma));
         return parameters;
     }
@@ -46,13 +49,14 @@ public sealed class Parser(Lexer lexer)
     Block Block()
     {
         tokens.Expect(TokenKind.LeftBrace);
+        semanticAnalyzer.ActOnStartOfBlock();
         var statements = new List<Statement>();
         while (tokens.Peek().Kind is not TokenKind.RightBrace)
         {
             statements.Add(Statement());
         }
         tokens.Expect(TokenKind.RightBrace);
-        return new Block(statements);
+        return semanticAnalyzer.ActOnBlock(statements);
     }
 
     // statement ::= declaration ";"
@@ -74,7 +78,7 @@ public sealed class Parser(Lexer lexer)
                 tokens.Consume();
                 var value = tokens.Peek().Kind is TokenKind.Semicolon ? null : Expression();
                 tokens.Expect(TokenKind.Semicolon);
-                return new ReturnStatement(token, value);
+                return semanticAnalyzer.ActOnReturnStatement(token, value);
             }
 
             case TokenKind.WhileKeyword:
@@ -83,7 +87,7 @@ public sealed class Parser(Lexer lexer)
                 tokens.Expect(TokenKind.LeftParen);
                 var condition = Expression();
                 tokens.Expect(TokenKind.RightParen);
-                return new WhileStatement(token, condition, Block());
+                return semanticAnalyzer.ActOnWhileStatement(token, condition, Block());
             }
 
             case TokenKind.ForKeyword:
@@ -96,7 +100,7 @@ public sealed class Parser(Lexer lexer)
                 tokens.Expect(TokenKind.Semicolon);
                 var step = OptionalExpression(TokenKind.RightParen);
                 tokens.Expect(TokenKind.RightParen);
-                return new ForStatement(token, initializer, condition, step, Block());
+                return semanticAnalyzer.ActOnForStatement(token, initializer, condition, step, Block());
             }
         }
 
@@ -109,7 +113,7 @@ public sealed class Parser(Lexer lexer)
 
         var expression = Expression();
         tokens.Expect(TokenKind.Semicolon);
-        return new ExpressionStatement(expression);
+        return semanticAnalyzer.ActOnExpressionStatement(expression);
     }
 
     // ifStmt ::= "if" "(" expression ")" block ("else" (ifStmt | block))?
@@ -126,7 +130,7 @@ public sealed class Parser(Lexer lexer)
         {
             elseBranch = tokens.Peek().Kind is TokenKind.IfKeyword ? IfStatement() : Block();
         }
-        return new IfStatement(keyword, condition, then, elseBranch);
+        return semanticAnalyzer.ActOnIfStatement(keyword, condition, then, elseBranch);
     }
 
     // declaration ::= type identifier ("=" expression)?
@@ -135,7 +139,7 @@ public sealed class Parser(Lexer lexer)
         var type = Type();
         var name = tokens.Expect(TokenKind.Identifier);
         var initializer = TryConsume(TokenKind.Assign) ? Expression() : null;
-        return new DeclarationStatement(type, name, initializer);
+        return semanticAnalyzer.ActOnDeclarationStatement(type, name, initializer);
     }
 
     // expression ::= assign
@@ -147,9 +151,9 @@ public sealed class Parser(Lexer lexer)
         // 2 つ先まで見て、代入か式かを決める
         if (tokens.Peek().Kind is TokenKind.Identifier && tokens.Peek(1).Kind is TokenKind.Assign)
         {
-            var target = new DeclarationReferenceExpression(tokens.Consume());
+            var target = semanticAnalyzer.ActOnDeclarationReference(tokens.Consume());
             var operatorToken = tokens.Consume();
-            return new AssignmentExpression(target, operatorToken, Assignment());
+            return semanticAnalyzer.ActOnAssignment(target, operatorToken, Assignment());
         }
         return Equality();
     }
@@ -173,7 +177,7 @@ public sealed class Parser(Lexer lexer)
         if (kind is TokenKind.Plus or TokenKind.Minus)
         {
             var operatorToken = tokens.Consume();
-            return new UnaryExpression(operatorToken, Unary());
+            return semanticAnalyzer.ActOnUnaryOperator(operatorToken, Unary());
         }
         return Primary();
     }
@@ -191,18 +195,18 @@ public sealed class Parser(Lexer lexer)
             case TokenKind.CharLiteral:
             case TokenKind.TrueKeyword:
             case TokenKind.FalseKeyword:
-                return new LiteralExpression(tokens.Consume());
+                return semanticAnalyzer.ActOnLiteral(tokens.Consume());
 
             case TokenKind.Identifier:
             {
                 tokens.Consume();
                 if (!TryConsume(TokenKind.LeftParen))
                 {
-                    return new DeclarationReferenceExpression(token);
+                    return semanticAnalyzer.ActOnDeclarationReference(token);
                 }
                 List<Expression> arguments = tokens.Peek().Kind is TokenKind.RightParen ? [] : Arguments();
                 tokens.Expect(TokenKind.RightParen);
-                return new CallExpression(token, arguments);
+                return semanticAnalyzer.ActOnCall(token, arguments);
             }
 
             case TokenKind.LeftParen:
@@ -249,7 +253,7 @@ public sealed class Parser(Lexer lexer)
         while (operators.Contains(tokens.Peek().Kind))
         {
             var operatorToken = tokens.Consume();
-            left = new BinaryExpression(operatorToken, left, parseOperand());
+            left = semanticAnalyzer.ActOnBinaryOperator(operatorToken, left, parseOperand());
         }
         return left;
     }

@@ -6,7 +6,7 @@ namespace Chibikko.Tests.Frontend;
 public class SemanticAnalyzerTests
 {
     static TranslationUnit Analyze(string source) =>
-        new SemanticAnalyzer(source).Analyze(new Parser(new Lexer(source)).Parse());
+        new Parser(new Lexer(source), new SemanticAnalyzer(source)).Parse();
 
     // main の本体を解析し、最後の文の式を取り出す
     static Expression AnalyzeExpression(string body)

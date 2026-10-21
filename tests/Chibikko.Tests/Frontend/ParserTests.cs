@@ -5,11 +5,15 @@ namespace Chibikko.Tests.Frontend;
 
 public class ParserTests
 {
-    static TranslationUnit Parse(string source) => new Parser(new Lexer(source)).Parse();
+    static TranslationUnit Parse(string source) => new Parser(new Lexer(source), new SemanticAnalyzer(source)).Parse();
 
-    // 関数 main の本体だけを取り出す
+    // Parser は SemanticAnalyzer を呼ぶので、テストで使う識別子を先に宣言しておく
+    const string Prelude = "int f(int p, int q) { return p; }";
+    const string Locals = "int a; int b; int x;";
+
+    // 関数 main の本体のうち、Locals 以降の文だけを取り出す
     static List<Statement> ParseBody(string body) =>
-        Parse($"int main() {{ {body} }}").Functions[0].Body.Statements;
+        Parse($"{Prelude} int main() {{ {Locals} {body} }}").Functions[^1].Body.Statements.Skip(3).ToList();
 
     static Expression ParseExpression(string expression) =>
         Assert.IsType<ExpressionStatement>(ParseBody($"{expression};")[0]).Expression;
@@ -86,7 +90,7 @@ public class ParserTests
     [Fact]
     public void Declaration_HasInitializer()
     {
-        var declaration = Assert.IsType<DeclarationStatement>(Assert.Single(ParseBody("int x = 1;")));
+        var declaration = Assert.IsType<DeclarationStatement>(Assert.Single(ParseBody("int y = 1;")));
 
         Assert.Equal(TokenKind.IntKeyword, declaration.Type.Kind);
         Assert.NotNull(declaration.Initializer);
