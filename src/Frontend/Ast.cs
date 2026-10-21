@@ -4,7 +4,7 @@ namespace Chibikko.Frontend;
 
 // AST は Token をそのまま保持する。識別子名やリテラルの値はソースの綴りから後段で取り出す。
 // ノード名は Clang に倣う(DeclarationReferenceExpression, CallExpression など)。
-// Parser は構文だけを埋め、型や参照先(init プロパティ)は SemanticAnalyzer が埋めた新しいノードを作る。
+// ノードは Parser から呼ばれた SemanticAnalyzer が作り、型や参照先(init プロパティ)もその場で埋める。
 
 public sealed record TranslationUnit(List<FunctionDeclaration> Functions);
 

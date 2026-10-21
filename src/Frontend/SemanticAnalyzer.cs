@@ -3,8 +3,8 @@ using Chibikko.Common;
 namespace Chibikko.Frontend;
 
 /// <summary>
-/// 型なし AST を受け取り、型と参照先を埋めた新しい AST を返す。
-/// 暗黙の型変換は ImplicitCastExpression として挿入する(Clang の Sema と同じ)。
+/// Parser から構文要素ごとに ActOn* で呼ばれ、型と参照先を埋めたノードを返す(Clang の Sema と同じ)。
+/// 暗黙の型変換は ImplicitCastExpression として挿入する。
 /// </summary>
 public sealed class SemanticAnalyzer(string source)
 {
@@ -16,200 +16,162 @@ public sealed class SemanticAnalyzer(string source)
 
     FunctionDeclaration? currentFunction;
 
-    public TranslationUnit Analyze(TranslationUnit unit)
-    {
-        // 先に全関数のシグネチャを登録し、定義より前の呼び出しや再帰を許す
-        var signatures = unit.Functions.Select(Signature).ToList();
-        return new TranslationUnit(signatures.Select(Function).ToList());
-    }
+    public TranslationUnit ActOnTranslationUnit(List<FunctionDeclaration> functions) => new(functions);
 
-    FunctionDeclaration Signature(FunctionDeclaration function)
+    // ---- 関数 ----
+
+    public ParameterDeclaration ActOnParameterDeclaration(Token type, Token name) =>
+        new(type, name) { ResolvedType = VariableType(type) };
+
+    // 本体を読む前にシグネチャを登録し、再帰呼び出しを許す
+    public FunctionDeclaration ActOnStartOfFunctionDefinition(Token returnType, Token name, List<ParameterDeclaration> parameters)
     {
-        var name = Spelling(function.Name);
-        if (functions.ContainsKey(name))
+        var spelling = Spelling(name);
+        if (functions.ContainsKey(spelling))
         {
-            throw new CompileException($"redefinition of function '{name}'", function.Name.Offset);
+            throw new CompileException($"redefinition of function '{spelling}'", name.Offset);
         }
 
-        var parameters = function.Parameters
-            .Select(parameter => parameter with { ResolvedType = VariableType(parameter.Type) })
-            .ToList();
-        var signature = function with
+        var signature = new FunctionDeclaration(returnType, name, parameters, new Block([]))
         {
-            Parameters = parameters,
-            ResolvedReturnType = ResolveType(function.ReturnType),
+            ResolvedReturnType = ResolveType(returnType),
         };
-        functions[name] = signature;
-        return signature;
-    }
-
-    FunctionDeclaration Function(FunctionDeclaration signature)
-    {
+        functions[spelling] = signature;
         currentFunction = signature;
+
         PushScope();
-        foreach (var parameter in signature.Parameters)
+        foreach (var parameter in parameters)
         {
             Declare(parameter);
         }
-        var body = Block(signature.Body);
+        return signature;
+    }
+
+    public FunctionDeclaration ActOnFinishFunctionBody(FunctionDeclaration signature, Block body)
+    {
         PopScope();
-        return signature with { Body = body };
+        currentFunction = null;
+        var function = signature with { Body = body };
+        functions[Spelling(function.Name)] = function;
+        return function;
     }
 
     // ---- 文 ----
 
-    Block Block(Block block)
+    public void ActOnStartOfBlock() => PushScope();
+
+    public Block ActOnBlock(List<Statement> statements)
     {
-        PushScope();
-        var statements = block.Statements.Select(Statement).ToList();
         PopScope();
         return new Block(statements);
     }
 
-    Statement Statement(Statement statement) => statement switch
+    // 初期化式は宣言の前に解析済み。int x = x; の右辺の x は外側の x を指す
+    public DeclarationStatement ActOnDeclarationStatement(Token type, Token name, Expression? initializer)
     {
-        Block block => Block(block),
-        DeclarationStatement declaration => Declaration(declaration),
-        ReturnStatement returnStatement => Return(returnStatement),
-        ExpressionStatement expressionStatement => new ExpressionStatement(Expression(expressionStatement.Expression)),
-        IfStatement ifStatement => new IfStatement(
-            ifStatement.Keyword,
-            Condition(ifStatement.Condition),
-            Block(ifStatement.Then),
-            ifStatement.Else is null ? null : Statement(ifStatement.Else)),
-        WhileStatement whileStatement => new WhileStatement(
-            whileStatement.Keyword,
-            Condition(whileStatement.Condition),
-            Block(whileStatement.Body)),
-        ForStatement forStatement => For(forStatement),
-        _ => throw new InvalidOperationException($"unknown statement {statement.GetType().Name}"),
-    };
-
-    DeclarationStatement Declaration(DeclarationStatement declaration)
-    {
-        var type = VariableType(declaration.Type);
-
-        // 初期化式は宣言の前に解析する。int x = x; の右辺の x は外側の x を指す
-        var initializer = declaration.Initializer is null
-            ? null
-            : ConvertTo(Expression(declaration.Initializer), type, declaration.Initializer);
-
-        var analyzed = declaration with { Initializer = initializer, ResolvedType = type };
-        Declare(analyzed);
-        return analyzed;
+        var resolved = VariableType(type);
+        var declaration = new DeclarationStatement(type, name, initializer is null ? null : ConvertTo(initializer, resolved))
+        {
+            ResolvedType = resolved,
+        };
+        Declare(declaration);
+        return declaration;
     }
 
-    ReturnStatement Return(ReturnStatement returnStatement)
+    public ReturnStatement ActOnReturnStatement(Token keyword, Expression? value)
     {
         var returnType = currentFunction!.ResolvedReturnType!;
-        if (returnStatement.Value is null)
+        if (value is null)
         {
             if (returnType != BuiltinType.Void)
             {
-                throw new CompileException("non-void function should return a value", returnStatement.Keyword.Offset);
+                throw new CompileException("non-void function should return a value", keyword.Offset);
             }
-            return returnStatement;
+            return new ReturnStatement(keyword, null);
         }
         if (returnType == BuiltinType.Void)
         {
-            throw new CompileException("void function should not return a value", returnStatement.Keyword.Offset);
+            throw new CompileException("void function should not return a value", keyword.Offset);
         }
-        var value = ConvertTo(Expression(returnStatement.Value), returnType, returnStatement.Value);
-        return returnStatement with { Value = value };
+        return new ReturnStatement(keyword, ConvertTo(value, returnType));
     }
 
-    ForStatement For(ForStatement forStatement) => forStatement with
-    {
-        Initializer = forStatement.Initializer is null ? null : Expression(forStatement.Initializer),
-        Condition = forStatement.Condition is null ? null : Condition(forStatement.Condition),
-        Step = forStatement.Step is null ? null : Expression(forStatement.Step),
-        Body = Block(forStatement.Body),
-    };
+    public ExpressionStatement ActOnExpressionStatement(Expression expression) => new(expression);
+
+    public IfStatement ActOnIfStatement(Token keyword, Expression condition, Block then, Statement? elseBranch) =>
+        new(keyword, Condition(condition), then, elseBranch);
+
+    public WhileStatement ActOnWhileStatement(Token keyword, Expression condition, Block body) =>
+        new(keyword, Condition(condition), body);
+
+    public ForStatement ActOnForStatement(Token keyword, Expression? initializer, Expression? condition, Expression? step, Block body) =>
+        new(keyword, initializer, condition is null ? null : Condition(condition), step, body);
 
     // if / while / for の条件は bool に変換する
-    Expression Condition(Expression condition) => ConvertTo(Expression(condition), BuiltinType.Bool, condition);
+    Expression Condition(Expression condition) => ConvertTo(condition, BuiltinType.Bool);
 
     // ---- 式 ----
 
-    Expression Expression(Expression expression) => expression switch
-    {
-        LiteralExpression literal => literal with { Type = LiteralType(literal.Token) },
-        DeclarationReferenceExpression reference => Reference(reference),
-        CallExpression call => Call(call),
-        UnaryExpression unary => Unary(unary),
-        BinaryExpression binary => Binary(binary),
-        AssignmentExpression assignment => Assignment(assignment),
-        _ => throw new InvalidOperationException($"unknown expression {expression.GetType().Name}"),
-    };
+    public LiteralExpression ActOnLiteral(Token token) => new(token) { Type = LiteralType(token) };
 
-    DeclarationReferenceExpression Reference(DeclarationReferenceExpression reference)
+    public DeclarationReferenceExpression ActOnDeclarationReference(Token name)
     {
-        var name = Spelling(reference.Name);
-        var declaration = Lookup(name)
-            ?? throw new CompileException($"use of undeclared identifier '{name}'", reference.Name.Offset);
-        return reference with { Declaration = declaration, Type = declaration.ResolvedType };
+        var spelling = Spelling(name);
+        var declaration = Lookup(spelling)
+            ?? throw new CompileException($"use of undeclared identifier '{spelling}'", name.Offset);
+        return new DeclarationReferenceExpression(name) { Declaration = declaration, Type = declaration.ResolvedType };
     }
 
-    CallExpression Call(CallExpression call)
+    public CallExpression ActOnCall(Token callee, List<Expression> arguments)
     {
-        var name = Spelling(call.Callee);
+        var name = Spelling(callee);
         if (!functions.TryGetValue(name, out var function))
         {
-            throw new CompileException($"call to undeclared function '{name}'", call.Callee.Offset);
+            throw new CompileException($"call to undeclared function '{name}'", callee.Offset);
         }
-        if (call.Arguments.Count != function.Parameters.Count)
+        if (arguments.Count != function.Parameters.Count)
         {
             throw new CompileException(
-                $"'{name}' expects {function.Parameters.Count} arguments, but {call.Arguments.Count} were given",
-                call.Callee.Offset);
+                $"'{name}' expects {function.Parameters.Count} arguments, but {arguments.Count} were given",
+                callee.Offset);
         }
 
-        var arguments = call.Arguments
-            .Zip(function.Parameters, (argument, parameter) =>
-                ConvertTo(Expression(argument), parameter.ResolvedType!, argument))
+        var converted = arguments
+            .Zip(function.Parameters, (argument, parameter) => ConvertTo(argument, parameter.ResolvedType!))
             .ToList();
-        return call with { Arguments = arguments, Function = function, Type = function.ResolvedReturnType };
+        return new CallExpression(callee, converted) { Function = function, Type = function.ResolvedReturnType };
     }
 
-    UnaryExpression Unary(UnaryExpression unary)
+    public UnaryExpression ActOnUnaryOperator(Token operatorToken, Expression operand)
     {
-        var operand = Expression(unary.Operand);
-        RequireArithmetic(operand, unary.Operand);
+        RequireArithmetic(operand);
         var type = BuiltinType.Promote(operand.Type!);
-        return unary with { Operand = ConvertTo(operand, type, unary.Operand), Type = type };
+        return new UnaryExpression(operatorToken, ConvertTo(operand, type)) { Type = type };
     }
 
-    BinaryExpression Binary(BinaryExpression binary)
+    public BinaryExpression ActOnBinaryOperator(Token operatorToken, Expression left, Expression right)
     {
-        var left = Expression(binary.Left);
-        var right = Expression(binary.Right);
-        RequireArithmetic(left, binary.Left);
-        RequireArithmetic(right, binary.Right);
+        RequireArithmetic(left);
+        RequireArithmetic(right);
 
         // 両辺を共通の型にそろえてから計算する
         var common = BuiltinType.UsualArithmeticConversion(left.Type!, right.Type!);
-        var isComparison = binary.Operator.Kind is TokenKind.EqualEqual or TokenKind.NotEqual
+        var isComparison = operatorToken.Kind is TokenKind.EqualEqual or TokenKind.NotEqual
             or TokenKind.Less or TokenKind.LessEqual or TokenKind.Greater or TokenKind.GreaterEqual;
 
-        return binary with
+        return new BinaryExpression(operatorToken, ConvertTo(left, common), ConvertTo(right, common))
         {
-            Left = ConvertTo(left, common, binary.Left),
-            Right = ConvertTo(right, common, binary.Right),
             Type = isComparison ? BuiltinType.Bool : common,
         };
     }
 
-    AssignmentExpression Assignment(AssignmentExpression assignment)
-    {
-        var target = Reference(assignment.Target);
-        var value = ConvertTo(Expression(assignment.Value), target.Type!, assignment.Value);
-        return assignment with { Target = target, Value = value, Type = target.Type };
-    }
+    public AssignmentExpression ActOnAssignment(DeclarationReferenceExpression target, Token operatorToken, Expression value) =>
+        new(target, operatorToken, ConvertTo(value, target.Type!)) { Type = target.Type };
 
     // ---- 型 ----
 
-    // 型が違えば ImplicitCastExpression で包む。original はエラー位置を取るための解析前のノード
-    Expression ConvertTo(Expression expression, BuiltinType type, Expression original)
+    // 型が違えば ImplicitCastExpression で包む
+    Expression ConvertTo(Expression expression, BuiltinType type)
     {
         if (expression.Type == type)
         {
@@ -217,16 +179,16 @@ public sealed class SemanticAnalyzer(string source)
         }
         if (expression.Type == BuiltinType.Void || type == BuiltinType.Void)
         {
-            throw new CompileException($"cannot convert '{expression.Type}' to '{type}'", Offset(original));
+            throw new CompileException($"cannot convert '{expression.Type}' to '{type}'", Offset(expression));
         }
         return new ImplicitCastExpression(expression) { Type = type };
     }
 
-    void RequireArithmetic(Expression expression, Expression original)
+    static void RequireArithmetic(Expression expression)
     {
         if (!expression.Type!.IsArithmetic)
         {
-            throw new CompileException($"invalid operand of type '{expression.Type}'", Offset(original));
+            throw new CompileException($"invalid operand of type '{expression.Type}'", Offset(expression));
         }
     }
 
