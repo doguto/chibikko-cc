@@ -121,12 +121,12 @@ public sealed class Parser(Lexer lexer)
         tokens.Expect(TokenKind.RightParen);
         var then = Block();
 
-        Statement? @else = null;
+        Statement? elseBranch = null;
         if (TryConsume(TokenKind.ElseKeyword))
         {
-            @else = tokens.Peek().Kind == TokenKind.IfKeyword ? IfStatement() : Block();
+            elseBranch = tokens.Peek().Kind == TokenKind.IfKeyword ? IfStatement() : Block();
         }
-        return new IfStatement(keyword, condition, then, @else);
+        return new IfStatement(keyword, condition, then, elseBranch);
     }
 
     // declaration ::= type identifier ("=" expression)?
@@ -148,8 +148,8 @@ public sealed class Parser(Lexer lexer)
         if (tokens.Peek().Kind == TokenKind.Identifier && tokens.Peek(1).Kind == TokenKind.Assign)
         {
             var target = new DeclarationReferenceExpression(tokens.Consume());
-            var @operator = tokens.Consume();
-            return new AssignmentExpression(target, @operator, Assignment());
+            var operatorToken = tokens.Consume();
+            return new AssignmentExpression(target, operatorToken, Assignment());
         }
         return Equality();
     }
@@ -172,8 +172,8 @@ public sealed class Parser(Lexer lexer)
         var kind = tokens.Peek().Kind;
         if (kind is TokenKind.Plus or TokenKind.Minus)
         {
-            var @operator = tokens.Consume();
-            return new UnaryExpression(@operator, Unary());
+            var operatorToken = tokens.Consume();
+            return new UnaryExpression(operatorToken, Unary());
         }
         return Primary();
     }
@@ -242,14 +242,14 @@ public sealed class Parser(Lexer lexer)
 
     // ---- 補助 ----
 
-    // 左結合の二項演算: parseOperand (@operator parseOperand)*
+    // 左結合の二項演算: operand (operator operand)*
     Expression LeftAssociative(Func<Expression> parseOperand, params TokenKind[] operators)
     {
         var left = parseOperand();
         while (operators.Contains(tokens.Peek().Kind))
         {
-            var @operator = tokens.Consume();
-            left = new BinaryExpression(@operator, left, parseOperand());
+            var operatorToken = tokens.Consume();
+            left = new BinaryExpression(operatorToken, left, parseOperand());
         }
         return left;
     }
