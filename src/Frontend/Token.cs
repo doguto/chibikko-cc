@@ -58,3 +58,8 @@ public enum TokenKind
 /// ソース上の綴り(Offset, Length)のみを保持する。値の変換は後段で行う。
 /// </summary>
 public readonly record struct Token(TokenKind Kind, int Offset, int Length);
+
+public static class TokenExtensions
+{
+    public static string Spelling(this Token token, string source) => source.Substring(token.Offset, token.Length);
+}
