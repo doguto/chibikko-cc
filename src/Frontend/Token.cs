@@ -2,38 +2,38 @@ namespace Chibikko.Frontend;
 
 public enum TokenKind
 {
-    Eof,
-    Ident,
+    EndOfFile,
+    Identifier,
 
     // リテラル
-    IntLit,
-    FloatLit,
-    CharLit,
+    IntegerLiteral,
+    FloatLiteral,
+    CharLiteral,
 
     // キーワード
-    KwReturn,
-    KwIf,
-    KwElse,
-    KwWhile,
-    KwFor,
-    KwTrue,
-    KwFalse,
+    ReturnKeyword,
+    IfKeyword,
+    ElseKeyword,
+    WhileKeyword,
+    ForKeyword,
+    TrueKeyword,
+    FalseKeyword,
 
     // 型
-    KwInt,
-    KwLong,
-    KwVoid,
-    KwBool,
-    KwChar,
-    KwFloat,
-    KwDouble,
+    IntKeyword,
+    LongKeyword,
+    VoidKeyword,
+    BoolKeyword,
+    CharKeyword,
+    FloatKeyword,
+    DoubleKeyword,
 
     // 記号
-    LParen,
-    RParen,
-    LBrace,
-    RBrace,
-    Semi,
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
+    Semicolon,
     Comma,
 
     // 算術演算子
@@ -43,12 +43,12 @@ public enum TokenKind
     Slash,
 
     // 比較演算子
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
+    EqualEqual,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
 
     // 代入演算子
     Assign,

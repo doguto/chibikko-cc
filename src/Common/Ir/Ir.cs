@@ -14,37 +14,37 @@ public enum IrType
     F64,
 }
 
-public enum Opcode
+public enum OperationKind
 {
-    // 算術: Dest = A op B
+    // 算術: Destination = First operation Second
     Add,
-    Sub,
-    Mul,
-    Div,
+    Subtract,
+    Multiply,
+    Divide,
 
-    // 単項: Dest = -A
-    Neg,
+    // 単項: Destination = -First
+    Negate,
 
-    // 比較: Dest(i1) = A op B
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
+    // 比較: Destination(i1) = First operation Second
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
 
-    // 代入: Dest = A
+    // 代入: Destination = First
     Copy,
 
-    // 型変換: Dest = (Dest.Type) A
+    // 型変換: Destination = (Destination.Type) First
     Convert,
 
     // 制御: 基本ブロックの末尾にのみ置く
     Jump,   // goto Target
-    Branch, // if A goto Target else ElseTarget
-    Ret,    // return A(A は null 可)
+    Branch, // if First goto Target else ElseTarget
+    Return, // return First(First は null 可)
 
-    // 呼び出し: Dest = Callee(Args...)(Dest は null 可)
+    // 呼び出し: Destination = Callee(Arguments...)(Destination は null 可)
     Call,
 }
 
@@ -54,44 +54,44 @@ public enum Opcode
 public abstract record Operand(IrType Type);
 
 /// <summary>コンパイラが生成する一時変数(t0, t1, ...)。</summary>
-public sealed record Temp(int Id, IrType Type) : Operand(Type)
+public sealed record Temporary(int Id, IrType Type) : Operand(Type)
 {
     public override string ToString() => $"t{Id}";
 }
 
 /// <summary>ソース上の変数・引数。スタックスロットに割り当てる。</summary>
-public sealed record Var(string Name, IrType Type) : Operand(Type)
+public sealed record Variable(string Name, IrType Type) : Operand(Type)
 {
     public override string ToString() => Name;
 }
 
-public sealed record IntConst(long Value, IrType Type) : Operand(Type)
+public sealed record IntegerConstant(long Value, IrType Type) : Operand(Type)
 {
     public override string ToString() => Value.ToString();
 }
 
-public sealed record FloatConst(double Value, IrType Type) : Operand(Type)
+public sealed record FloatConstant(double Value, IrType Type) : Operand(Type)
 {
     public override string ToString() => Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
 }
 
 /// <summary>
-/// 四つ組 (Op, A, B, Dest)。制御命令は Target / ElseTarget に飛び先のブロック名を持つ。
+/// 四つ組 (Operation, First, Second, Destination)。制御命令は Target / ElseTarget に飛び先のブロック名を持つ。
 /// </summary>
-public sealed class Instruction(Opcode op, Operand? dest = null, Operand? a = null, Operand? b = null)
+public sealed class Instruction(OperationKind operation, Operand? destination = null, Operand? first = null, Operand? second = null)
 {
-    public Opcode Op { get; set; } = op;
-    public Operand? Dest { get; set; } = dest;
-    public Operand? A { get; set; } = a;
-    public Operand? B { get; set; } = b;
+    public OperationKind Operation { get; set; } = operation;
+    public Operand? Destination { get; set; } = destination;
+    public Operand? First { get; set; } = first;
+    public Operand? Second { get; set; } = second;
 
     public string? Target { get; init; }
     public string? ElseTarget { get; init; }
 
     public string? Callee { get; init; }
-    public List<Operand> Args { get; init; } = [];
+    public List<Operand> Arguments { get; init; } = [];
 
-    public bool IsTerminator => Op is Opcode.Jump or Opcode.Branch or Opcode.Ret;
+    public bool IsTerminator => Operation is OperationKind.Jump or OperationKind.Branch or OperationKind.Return;
 }
 
 public sealed class BasicBlock(string name)
@@ -104,15 +104,15 @@ public sealed class Function(string name, IrType returnType)
 {
     public string Name { get; } = name;
     public IrType ReturnType { get; } = returnType;
-    public List<Var> Params { get; } = [];
+    public List<Variable> Parameters { get; } = [];
 
     /// <summary>引数以外のローカル変数。</summary>
-    public List<Var> Locals { get; } = [];
+    public List<Variable> Locals { get; } = [];
 
     public List<BasicBlock> Blocks { get; } = [];
 
     /// <summary>次に払い出す一時変数の番号。</summary>
-    public int NextTempId { get; set; }
+    public int NextTemporaryId { get; set; }
 }
 
 public sealed class Module

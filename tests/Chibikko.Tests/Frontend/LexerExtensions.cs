@@ -12,7 +12,7 @@ public static class LexerExtensions
         {
             token = lexer.Lex();
             tokens.Add(token);
-        } while (token.Kind != TokenKind.Eof);
+        } while (token.Kind is not TokenKind.EndOfFile);
         return tokens;
     }
 }
