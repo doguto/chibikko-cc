@@ -23,7 +23,6 @@ public sealed class SemanticAnalyzer(string source)
     public ParameterDeclaration ActOnParameterDeclaration(Token type, Token name) =>
         new(type, name) { ResolvedType = VariableType(type) };
 
-    // 本体を読む前にシグネチャを登録し、再帰呼び出しを許す
     public FunctionDeclaration ActOnStartOfFunctionDefinition(Token returnType, Token name, List<ParameterDeclaration> parameters)
     {
         var spelling = Spelling(name);
@@ -66,7 +65,6 @@ public sealed class SemanticAnalyzer(string source)
         return new Block(statements);
     }
 
-    // 初期化式は宣言の前に解析済み。int x = x; の右辺の x は外側の x を指す
     public DeclarationStatement ActOnDeclarationStatement(Token type, Token name, Expression? initializer)
     {
         var resolved = VariableType(type);
