@@ -25,7 +25,7 @@ equality   ::= relational (("==" | "!=") relational)*
 relational ::= add (("<=" | ">=" | "<" | ">") add)*
 add        ::= mul (("+" | "-") mul)*
 mul        ::= unary (("*" | "/") unary)*
-unary      ::= ("+" | "-")? primary
+unary      ::= ("+" | "-") unary | primary
 primary    ::= literal
              | identifier ("(" args? ")")?
              | "(" expression ")"
