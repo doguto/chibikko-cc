@@ -78,7 +78,7 @@ Program → Compiler(Interface)
 - Token は種別とソース上の位置(Offset, Length)だけを持つ。リテラルの値変換とサフィックス判定は後段で行う(Clang の方式)。
 - Parser は `Lexer.Lex()` で Token を 1 つずつ取得する。Token 列を事前に作らない(Clang の方式)。先読みのバッファは `TokenStream` が持ち、Parser はそれを介して Token を読む。Token 列をまとめて得る `Tokenize()` はテスト側の拡張メソッド(`tests/Chibikko.Tests/Frontend/LexerExtensions.cs`)とする。
 - Parser は構文木を作るだけで、型の判断をしない。型の判断は SemanticAnalyzer が行う。
-- 暗黙の型変換は IrGenerator で明示的な IR 命令に変換する。Backend は暗黙変換を扱わない。
+- 暗黙の型変換は SemanticAnalyzer が `ImplicitCastExpression` として AST に挿入し(Clang の `ImplicitCastExpr`)、IrGenerator が `convert` 命令に変換する。Backend は暗黙変換を扱わない。
 - IR は関数ごとの基本ブロックと 3 番地コードとする。値は型付き(`i1` `i32` `i64` `f32` `f64`)とする。
 - 最初はローカル変数をスタックスロットとして扱う。SSA 化は必要になった時点で Pass として追加する。
 
