@@ -1,4 +1,7 @@
-﻿using Chibikko.Common;
+﻿using Chibikko.Backend;
+using Chibikko.Common;
+using Chibikko.Frontend;
+using Chibikko.Optimizer;
 
 namespace Chibikko;
 
@@ -16,7 +19,13 @@ public static class Program
 
         try
         {
-            Console.Write(new Compiler().Compile(source));
+            var compiler = new Compiler(
+                new FrontendPipeline(),
+                new OptimizationPipeline(),
+                new BackendPipeline()
+            );
+
+            Console.Write(compiler.Compile(source));
             return 0;
         }
         catch (CompileException e)
