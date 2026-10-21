@@ -7,11 +7,9 @@ public class ParserTests
 {
     static TranslationUnit Parse(string source) => new Parser(new Lexer(source), new SemanticAnalyzer(source)).Parse();
 
-    // Parser は SemanticAnalyzer を呼ぶので、テストで使う識別子を先に宣言しておく
     const string Prelude = "int f(int p, int q) { return p; }";
     const string Locals = "int a; int b; int x;";
 
-    // 関数 main の本体のうち、Locals 以降の文だけを取り出す
     static List<Statement> ParseBody(string body) =>
         Parse($"{Prelude} int main() {{ {Locals} {body} }}").Functions[^1].Body.Statements.Skip(3).ToList();
 

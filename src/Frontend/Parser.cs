@@ -2,7 +2,6 @@ using Chibikko.Common;
 
 namespace Chibikko.Frontend;
 
-// 構文要素を読むたびに SemanticAnalyzer の ActOn* を呼び、型付きのノードを受け取る(Clang の Parser と Sema の関係)
 public sealed class Parser(Lexer lexer, SemanticAnalyzer semanticAnalyzer)
 {
     readonly TokenStream tokens = new(lexer);
