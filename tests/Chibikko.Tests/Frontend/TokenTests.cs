@@ -1,6 +1,6 @@
 using Chibikko.Frontend;
 
-namespace Chibikko.Tests;
+namespace Chibikko.Tests.Frontend;
 
 public class TokenTests
 {

@@ -1,7 +1,7 @@
 namespace Chibikko.Common.Ir;
 
 /// <summary>
-/// IR 上の値の型。C の型は Sema で解決し、IrGen でここへ落とす。
+/// IR 上の値の型。C の型は SemanticAnalyzer で解決し、IrGenerator でここへ落とす。
 /// </summary>
 public enum IrType
 {
