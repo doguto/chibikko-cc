@@ -1,8 +1,8 @@
-using Chibikko.Common.Ir;
+using Chibikko.Common;
 
 namespace Chibikko;
 
 public interface IFrontendPipeline
 {
-    Module Run(string source);
+    Ir Run(string source);
 }

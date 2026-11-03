@@ -1,5 +1,6 @@
 using Chibikko.Common;
 using Chibikko.Frontend;
+using Chibikko.Frontend.Type;
 
 namespace Chibikko.Tests.Frontend;
 
@@ -43,7 +44,7 @@ public class LexerTests
 
         Assert.Equal(expected, token.Kind);
         Assert.Equal(0, token.Offset);
-        Assert.Equal(source.Length, token.Length);
+        Assert.Equal(source, token.Text);
     }
 
     [Fact]
@@ -51,9 +52,9 @@ public class LexerTests
     {
         var tokens = new Lexer("  foo = 1;").Tokenize();
 
-        Assert.Equal(new Token(TokenKind.Identifier, 2, 3), tokens[0]);
-        Assert.Equal(new Token(TokenKind.Assign, 6, 1), tokens[1]);
-        Assert.Equal(new Token(TokenKind.IntegerLiteral, 8, 1), tokens[2]);
+        Assert.Equal(new Token(TokenKind.Identifier, "foo", 2), tokens[0]);
+        Assert.Equal(new Token(TokenKind.Assign, "=", 6), tokens[1]);
+        Assert.Equal(new Token(TokenKind.IntegerLiteral, "1", 8), tokens[2]);
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using Chibikko.Frontend;
+using Chibikko.Frontend.Type;
 
 namespace Chibikko.Tests.Frontend;
 

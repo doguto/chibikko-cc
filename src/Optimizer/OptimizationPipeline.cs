@@ -1,24 +1,24 @@
-using Chibikko.Common.Ir;
+using Chibikko.Common;
 
 namespace Chibikko.Optimizer;
 
 public interface IOptimizationPass
 {
-    void Run(Module module);
+    void Run(Ir ir);
 }
 
 public sealed class OptimizationPipeline : IOptimizationPipeline
 {
-    private readonly List<IOptimizationPass> _optimizations = [];
+    readonly List<IOptimizationPass> optimizations = [];
 
-    public void Add(IOptimizationPass optimization) => _optimizations.Add(optimization);
+    public void Add(IOptimizationPass optimization) => optimizations.Add(optimization);
 
-    public Module Run(Module module)
+    public Ir Run(Ir ir)
     {
-        foreach (var optimization in _optimizations)
+        foreach (var optimization in optimizations)
         {
-            optimization.Run(module);
+            optimization.Run(ir);
         }
-        return module;
+        return ir;
     }
 }

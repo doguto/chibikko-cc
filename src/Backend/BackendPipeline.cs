@@ -1,8 +1,8 @@
-using Chibikko.Common.Ir;
+using Chibikko.Common;
 
 namespace Chibikko.Backend;
 
 public sealed class BackendPipeline : IBackendPipeline
 {
-    public string Run(Module module) => new CodeGenerator().Emit(module);
+    public string Run(Ir ir) => new CodeGenerator().Emit(ir);
 }

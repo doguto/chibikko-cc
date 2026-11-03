@@ -1,8 +1,8 @@
-using Chibikko.Common.Ir;
+using Chibikko.Common;
 
 namespace Chibikko;
 
 public interface IOptimizationPipeline
 {
-    Module Run(Module module);
+    Ir Run(Ir ir);
 }

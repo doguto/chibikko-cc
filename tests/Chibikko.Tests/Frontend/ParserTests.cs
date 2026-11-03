@@ -1,11 +1,12 @@
 using Chibikko.Common;
 using Chibikko.Frontend;
+using Chibikko.Frontend.Type;
 
 namespace Chibikko.Tests.Frontend;
 
 public class ParserTests
 {
-    static TranslationUnit Parse(string source) => new Parser(new Lexer(source), new SemanticAnalyzer(source)).Parse();
+    static TranslationUnit Parse(string source) => new Parser(new Lexer(source), new SemanticAnalyzer()).Parse();
 
     const string Prelude = "int f(int p, int q) { return p; }";
     const string Locals = "int a; int b; int x;";
