@@ -1,4 +1,5 @@
 using Chibikko.Common;
+using Chibikko.Frontend.Type;
 
 namespace Chibikko.Frontend;
 
@@ -73,34 +74,34 @@ public sealed class Parser(Lexer lexer, SemanticAnalyzer semanticAnalyzer)
                 return IfStatement();
 
             case TokenKind.ReturnKeyword:
-            {
-                tokens.Consume();
-                var value = tokens.Peek().Kind is TokenKind.Semicolon ? null : Expression();
-                tokens.Expect(TokenKind.Semicolon);
-                return semanticAnalyzer.ActOnReturnStatement(token, value);
-            }
+                {
+                    tokens.Consume();
+                    var value = tokens.Peek().Kind is TokenKind.Semicolon ? null : Expression();
+                    tokens.Expect(TokenKind.Semicolon);
+                    return semanticAnalyzer.ActOnReturnStatement(token, value);
+                }
 
             case TokenKind.WhileKeyword:
-            {
-                tokens.Consume();
-                tokens.Expect(TokenKind.LeftParen);
-                var condition = Expression();
-                tokens.Expect(TokenKind.RightParen);
-                return semanticAnalyzer.ActOnWhileStatement(token, condition, Block());
-            }
+                {
+                    tokens.Consume();
+                    tokens.Expect(TokenKind.LeftParen);
+                    var condition = Expression();
+                    tokens.Expect(TokenKind.RightParen);
+                    return semanticAnalyzer.ActOnWhileStatement(token, condition, Block());
+                }
 
             case TokenKind.ForKeyword:
-            {
-                tokens.Consume();
-                tokens.Expect(TokenKind.LeftParen);
-                var initializer = OptionalExpression(TokenKind.Semicolon);
-                tokens.Expect(TokenKind.Semicolon);
-                var condition = OptionalExpression(TokenKind.Semicolon);
-                tokens.Expect(TokenKind.Semicolon);
-                var step = OptionalExpression(TokenKind.RightParen);
-                tokens.Expect(TokenKind.RightParen);
-                return semanticAnalyzer.ActOnForStatement(token, initializer, condition, step, Block());
-            }
+                {
+                    tokens.Consume();
+                    tokens.Expect(TokenKind.LeftParen);
+                    var initializer = OptionalExpression(TokenKind.Semicolon);
+                    tokens.Expect(TokenKind.Semicolon);
+                    var condition = OptionalExpression(TokenKind.Semicolon);
+                    tokens.Expect(TokenKind.Semicolon);
+                    var step = OptionalExpression(TokenKind.RightParen);
+                    tokens.Expect(TokenKind.RightParen);
+                    return semanticAnalyzer.ActOnForStatement(token, initializer, condition, step, Block());
+                }
         }
 
         if (IsTypeKeyword(token.Kind))
@@ -197,24 +198,24 @@ public sealed class Parser(Lexer lexer, SemanticAnalyzer semanticAnalyzer)
                 return semanticAnalyzer.ActOnLiteral(tokens.Consume());
 
             case TokenKind.Identifier:
-            {
-                tokens.Consume();
-                if (!TryConsume(TokenKind.LeftParen))
                 {
-                    return semanticAnalyzer.ActOnDeclarationReference(token);
+                    tokens.Consume();
+                    if (!TryConsume(TokenKind.LeftParen))
+                    {
+                        return semanticAnalyzer.ActOnDeclarationReference(token);
+                    }
+                    List<Expression> arguments = tokens.Peek().Kind is TokenKind.RightParen ? [] : Arguments();
+                    tokens.Expect(TokenKind.RightParen);
+                    return semanticAnalyzer.ActOnCall(token, arguments);
                 }
-                List<Expression> arguments = tokens.Peek().Kind is TokenKind.RightParen ? [] : Arguments();
-                tokens.Expect(TokenKind.RightParen);
-                return semanticAnalyzer.ActOnCall(token, arguments);
-            }
 
             case TokenKind.LeftParen:
-            {
-                tokens.Consume();
-                var expression = Expression();
-                tokens.Expect(TokenKind.RightParen);
-                return expression;
-            }
+                {
+                    tokens.Consume();
+                    var expression = Expression();
+                    tokens.Expect(TokenKind.RightParen);
+                    return expression;
+                }
 
             default:
                 throw new CompileException($"expected expression, found {token.Kind}", token.Offset);

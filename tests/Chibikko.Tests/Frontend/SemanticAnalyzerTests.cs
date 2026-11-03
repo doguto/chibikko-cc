@@ -1,12 +1,13 @@
 using Chibikko.Common;
 using Chibikko.Frontend;
+using Chibikko.Frontend.Type;
 
 namespace Chibikko.Tests.Frontend;
 
 public class SemanticAnalyzerTests
 {
     static TranslationUnit Analyze(string source) =>
-        new Parser(new Lexer(source), new SemanticAnalyzer(source)).Parse();
+        new Parser(new Lexer(source), new SemanticAnalyzer()).Parse();
 
     // main の本体を解析し、最後の文の式を取り出す
     static Expression AnalyzeExpression(string body)

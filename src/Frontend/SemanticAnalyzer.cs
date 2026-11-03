@@ -1,14 +1,10 @@
 using Chibikko.Common;
+using Chibikko.Frontend.Type;
 
 namespace Chibikko.Frontend;
 
-/// <summary>
-/// Parser から構文要素ごとに ActOn* で呼ばれ、型と参照先を埋めたノードを返す(Clang の Sema と同じ)。
-/// 暗黙の型変換は ImplicitCastExpression として挿入する。
-/// </summary>
-public sealed class SemanticAnalyzer(string source)
+public sealed class SemanticAnalyzer
 {
-    readonly string source = source;
     readonly Dictionary<string, FunctionDeclaration> functions = new();
 
     // 内側のブロックほど後ろ。名前は内側から探す
@@ -25,7 +21,7 @@ public sealed class SemanticAnalyzer(string source)
 
     public FunctionDeclaration ActOnStartOfFunctionDefinition(Token returnType, Token name, List<ParameterDeclaration> parameters)
     {
-        var spelling = Spelling(name);
+        var spelling = name.Text;
         if (functions.ContainsKey(spelling))
         {
             throw new CompileException($"redefinition of function '{spelling}'", name.Offset);
@@ -51,7 +47,7 @@ public sealed class SemanticAnalyzer(string source)
         PopScope();
         currentFunction = null;
         var function = signature with { Body = body };
-        functions[Spelling(function.Name)] = function;
+        functions[function.Name.Text] = function;
         return function;
     }
 
@@ -114,7 +110,7 @@ public sealed class SemanticAnalyzer(string source)
 
     public DeclarationReferenceExpression ActOnDeclarationReference(Token name)
     {
-        var spelling = Spelling(name);
+        var spelling = name.Text;
         var declaration = Lookup(spelling)
             ?? throw new CompileException($"use of undeclared identifier '{spelling}'", name.Offset);
         return new DeclarationReferenceExpression(name) { Declaration = declaration, Type = declaration.ResolvedType };
@@ -122,7 +118,7 @@ public sealed class SemanticAnalyzer(string source)
 
     public CallExpression ActOnCall(Token callee, List<Expression> arguments)
     {
-        var name = Spelling(callee);
+        var name = callee.Text;
         if (!functions.TryGetValue(name, out var function))
         {
             throw new CompileException($"call to undeclared function '{name}'", callee.Offset);
@@ -216,7 +212,7 @@ public sealed class SemanticAnalyzer(string source)
     // サフィックスで型が決まる: 1L は long、1.0f は float
     BuiltinType LiteralType(Token token)
     {
-        var suffix = Spelling(token)[^1];
+        var suffix = token.Text[^1];
         return token.Kind switch
         {
             TokenKind.IntegerLiteral => suffix is 'l' or 'L' ? BuiltinType.Long : BuiltinType.Int,
@@ -235,7 +231,7 @@ public sealed class SemanticAnalyzer(string source)
 
     void Declare(IVariableDeclaration declaration)
     {
-        var name = Spelling(declaration.Name);
+        var name = declaration.Name.Text;
         if (!scopes[^1].TryAdd(name, declaration))
         {
             throw new CompileException($"redefinition of '{name}'", declaration.Name.Offset);
@@ -256,7 +252,6 @@ public sealed class SemanticAnalyzer(string source)
 
     // ---- 補助 ----
 
-    string Spelling(Token token) => token.Spelling(source);
 
     // エラー位置として、式の先頭の Token の Offset を返す
     static int Offset(Expression expression) => expression switch

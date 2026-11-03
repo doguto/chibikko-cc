@@ -8,8 +8,8 @@ public sealed class Compiler(
 {
     public string Compile(string source)
     {
-        var module = frontend.Run(source);
-        var optimized = optimization.Run(module);
+        var ir = frontend.Run(source);
+        var optimized = optimization.Run(ir);
         return backend.Run(optimized);
     }
 }

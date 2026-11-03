@@ -78,8 +78,9 @@ Program → Compiler(Interface)
 - Parser は `Lexer.Lex()` で Token を 1 つずつ取得する。Token 列を事前に作らない(Clang の方式)。先読みのバッファは `TokenStream` が持ち、Parser はそれを介して Token を読む。Token 列をまとめて得る `Tokenize()` はテスト側の拡張メソッド(`tests/Chibikko.Tests/Frontend/LexerExtensions.cs`)とする。
 - Parser は構文を読み、構文要素ごとに SemanticAnalyzer の `ActOn*` を呼んでノードを受け取る(Clang の `Parser` と `Sema` の関係)。型の判断は SemanticAnalyzer だけが行い、Parser は型を見ない。
 - 解析は 1 パスなので、関数は呼び出しより前に定義する必要がある(C と同じ)。再帰呼び出しは本体を読む前にシグネチャを登録して許す。
-- 暗黙の型変換は SemanticAnalyzer が `ImplicitCastExpression` として AST に挿入し(Clang の `ImplicitCastExpr`)、IrGenerator が `convert` 命令に変換する。Backend は暗黙変換を扱わない。
-- IR は関数ごとの基本ブロックと 3 番地コードとする。値は型付き(`i1` `i32` `i64` `f32` `f64`)とする。
+- 暗黙の型変換は SemanticAnalyzer が `ImplicitCastExpression` として AST に挿入し(Clang の `ImplicitCastExpr`)、IrGenerator が `signextend` `truncate` `inttofloat` などの変換命令に変換する(定数は畳み込む)。Backend は暗黙変換を扱わない。
+- IR は関数ごとの基本ブロックと 3 番地コードとする。値は型付き(`i1` `i8` `i32` `i64` `f32` `f64` `ptr`)とする。
+- IR の構造は Clang の `-O0` 出力に合わせる。変数・引数は entry 先頭の `alloca` で確保し `load` / `store` で読み書きする(引数は `n.addr` に格納)。return が複数ある関数は `retval` に格納して `return` ブロックへ飛ぶ。整数の除算・大小比較は符号付き(`.s`)とする。到達不能なブロックは生成後に取り除く。
 - 最初はローカル変数をスタックスロットとして扱う。SSA 化は必要になった時点で Pass として追加する。
 
 ## 開発コマンド

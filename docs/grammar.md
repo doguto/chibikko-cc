@@ -1,43 +1,46 @@
 # 文法定義
 
+LL(2)文法
+再帰下降Parser
+
 ```ebnf
-translationUnit ::= function*
-
-function   ::= type identifier "(" params? ")" block
-params     ::= type identifier ("," type identifier)*
-
-block      ::= "{" statement* "}"
-
-statement  ::= declaration ";"
-             | "return" expression? ";"
-             | expression ";"
-             | ifStmt
-             | "while" "(" expression ")" block
-             | "for" "(" expression? ";" expression? ";" expression? ")" block
-
-ifStmt     ::= "if" "(" expression ")" block ("else" (ifStmt | block))?
-
-declaration ::= type identifier ("=" expression)?
-
-expression ::= assign
-assign     ::= identifier "=" assign | equality
-equality   ::= relational (("==" | "!=") relational)*
-relational ::= add (("<=" | ">=" | "<" | ">") add)*
-add        ::= mul (("+" | "-") mul)*
-mul        ::= unary (("*" | "/") unary)*
-unary      ::= ("+" | "-") unary | primary
-primary    ::= literal
-             | identifier ("(" args? ")")?
-             | "(" expression ")"
-args       ::= expression ("," expression)*
-
-identifier ::= [a-zA-Z_][a-zA-Z0-9_]*
-literal    ::= float | integer | char | bool
-float      ::= [0-9]+ "." [0-9]+ [fF]?
-integer    ::= [0-9]+ [lL]?
-char       ::= "'" ([^'\\\n] | "\\" [nrt0\\']) "'"
-bool       ::= "true" | "false"
-type       ::= "int" | "long" | "void" | "bool" | "char" | "float" | "double"
+ translationUnit ::= function*
+ 
+ function   ::= type identifier "(" params? ")" block
+ params     ::= type identifier ("," type identifier)*
+ 
+ block      ::= "{" statement* "}"
+ 
+ statement  ::= declaration ";"
+              | "return" expression? ";"
+              | expression ";"
+              | ifStmt
+              | "while" "(" expression ")" block
+              | "for" "(" expression? ";" expression? ";" expression? ")" block
+ 
+ ifStmt     ::= "if" "(" expression ")" block ("else" (ifStmt | block))?
+ 
+ declaration ::= type identifier ("=" expression)?
+ 
+ expression ::= assign
+ assign     ::= identifier "=" assign | equality
+ equality   ::= relational (("==" | "!=") relational)*
+ relational ::= add (("<=" | ">=" | "<" | ">") add)*
+ add        ::= mul (("+" | "-") mul)*
+ mul        ::= unary (("*" | "/") unary)*
+ unary      ::= ("+" | "-") unary | primary
+ primary    ::= literal
+              | identifier ("(" args? ")")?
+              | "(" expression ")"
+ args       ::= expression ("," expression)*
+ 
+ identifier ::= [a-zA-Z_][a-zA-Z0-9_]*
+ literal    ::= float | integer | char | bool
+ float      ::= [0-9]+ "." [0-9]+ [fF]?
+ integer    ::= [0-9]+ [lL]?
+ char       ::= "'" ([^'\\\n] | "\\" [nrt0\\']) "'"
+ bool       ::= "true" | "false"
+ type       ::= "int" | "long" | "void" | "bool" | "char" | "float" | "double"
 ```
 
 予約語(`return` `if` `else` `while` `for` `true` `false` と `type` の各語)は `identifier` として扱わない。
@@ -63,3 +66,15 @@ type       ::= "int" | "long" | "void" | "bool" | "char" | "float" | "double"
 
 - `==` `!=` `<=` `>=` は `=` `<` `>` より先に判定する(最長一致)。
 - 小数点を含む数値は浮動小数点リテラル、含まない数値は整数リテラルとして扱う。
+
+## Memo
+
+上記に追加したいもの
+
+- 配列
+- 文字列
+- 構造体
+- マクロ
+- #include (Link)
+
+ここまで終わったら最適化に入りたい

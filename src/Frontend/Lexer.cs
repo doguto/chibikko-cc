@@ -1,4 +1,5 @@
 using Chibikko.Common;
+using Chibikko.Frontend.Type;
 
 namespace Chibikko.Frontend;
 
@@ -33,7 +34,7 @@ public sealed class Lexer(string source)
         var current = Peek();
         if (current is '\0')
         {
-            return new Token(TokenKind.EndOfFile, position, 0);
+            return new Token(TokenKind.EndOfFile, "", position);
         }
         if (char.IsAsciiDigit(current))
         {
@@ -194,7 +195,7 @@ public sealed class Lexer(string source)
         }
     }
 
-    Token MakeToken(TokenKind kind, int start) => new(kind, start, position - start);
+    Token MakeToken(TokenKind kind, int start) => new(kind, source[start..position], start);
 
     static bool IsIdentifierStart(char character) => char.IsAsciiLetter(character) || character is '_';
 
