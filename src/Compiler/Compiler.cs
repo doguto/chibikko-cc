@@ -10,6 +10,7 @@ public sealed class Compiler(
     {
         var ir = frontend.Run(source);
         var optimized = optimization.Run(ir);
-        return backend.Run(optimized);
+        var result = backend.Run(optimized);
+        return result;
     }
 }
