@@ -13,6 +13,9 @@ public sealed class FrontendPipeline : IFrontendPipeline
         var parser = new Parser(lexer, semanticAnalyzer);
         var unit = parser.Parse();
 
-        throw new NotImplementedException("IrGenerator");
+        var irGenerator = new IrGenerator();
+        var ir = irGenerator.Generate(unit);
+
+        return ir;
     }
 }

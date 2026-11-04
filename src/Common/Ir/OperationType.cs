@@ -21,6 +21,7 @@ public enum OperationType
     Jump,
     JumpIfFalse,
 
+    Param,              // 関数呼び出しの際には Parameter を Param で Call の前に宣言する
     Call,
     Return,
 }
