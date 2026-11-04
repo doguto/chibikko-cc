@@ -1,3 +1,5 @@
+using Chibikko.Common.Ir;
+
 namespace Chibikko;
 
 public sealed class Compiler(
@@ -13,4 +15,6 @@ public sealed class Compiler(
         var result = backend.Run(optimized);
         return result;
     }
+
+    public string DumpIr(string source) => IrDumper.Dump(frontend.Run(source));
 }

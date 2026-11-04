@@ -2,34 +2,29 @@ using Chibikko.Common;
 
 namespace Chibikko.Frontend.Type;
 
-// AST は Token をそのまま保持する。識別子名やリテラルの値はソースの綴りから後段で取り出す。
-// ノード名は Clang に倣う(DeclarationReferenceExpression, CallExpression など)。
-// ノードは Parser から呼ばれた SemanticAnalyzer が作り、型や参照先(init プロパティ)もその場で埋める。
-
 // translationUnit ::= function*
 public sealed record TranslationUnit(List<FunctionDeclaration> Functions);
 
 // function ::= type identifier "(" params? ")" block
 public sealed record FunctionDeclaration(Token ReturnType, Token Name, List<ParameterDeclaration> Parameters, Block Body)
 {
-    public BuiltinType? ResolvedReturnType { get; init; }
+    public required BuiltinType ResolvedReturnType { get; init; }
 }
 
-// 引数とローカル変数。DeclarationReferenceExpression の参照先になる
 public interface IVariableDeclaration
 {
     Token Type { get; }
     Token Name { get; }
-    BuiltinType? ResolvedType { get; }
+    BuiltinType ResolvedType { get; }
 }
 
 // params ::= type identifier ("," type identifier)*
 public sealed record ParameterDeclaration(Token Type, Token Name) : IVariableDeclaration
 {
-    public BuiltinType? ResolvedType { get; init; }
+    public required BuiltinType ResolvedType { get; init; }
 }
 
-// ---- 文 ----
+// == 文 ==
 
 public abstract record Statement;
 
@@ -40,7 +35,7 @@ public sealed record Block(List<Statement> Statements) : Statement;
 // declaration ::= type identifier ("=" expression)? ";"
 public sealed record DeclarationStatement(Token Type, Token Name, Expression? Initializer) : Statement, IVariableDeclaration
 {
-    public BuiltinType? ResolvedType { get; init; }
+    public required BuiltinType ResolvedType { get; init; }
 }
 
 // "return" expression? ";"
@@ -59,11 +54,11 @@ public sealed record WhileStatement(Token Keyword, Expression Condition, Block B
 // "for" "(" expression? ";" expression? ";" expression? ")" block
 public sealed record ForStatement(Token Keyword, Expression? Initializer, Expression? Condition, Expression? Step, Block Body) : Statement;
 
-// ---- 式 ----
+// == 式 ==
 
 public abstract record Expression
 {
-    public BuiltinType? Type { get; init; }
+    public required BuiltinType Type { get; init; }
 }
 
 // primary ::= literal

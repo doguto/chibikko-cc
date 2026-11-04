@@ -5,13 +5,15 @@ using Chibikko.Frontend;
 using Chibikko.Optimizer;
 
 
-if (args.Length != 1)
+var dumpIr = args.Length == 2 && args[0] == "--dump-ir";
+if (args.Length != 1 && !dumpIr)
 {
-    Console.Error.WriteLine("usage: chibikko <file>");
+    Console.Error.WriteLine("usage: chibikko [--dump-ir] <file>");
     return 2;
 }
 
-var source = File.ReadAllText(args[0]);
+var path = args[^1];
+var source = File.ReadAllText(path);
 
 try
 {
@@ -21,11 +23,11 @@ try
         new BackendPipeline()
     );
 
-    Console.Write(compiler.Compile(source));
+    Console.Write(dumpIr ? compiler.DumpIr(source) : compiler.Compile(source));
     return 0;
 }
 catch (CompileException e)
 {
-    Console.Error.WriteLine($"{args[0]}:{e.Offset}: error: {e.Message}");
+    Console.Error.WriteLine($"{path}:{e.Offset}: error: {e.Message}");
     return 1;
 }

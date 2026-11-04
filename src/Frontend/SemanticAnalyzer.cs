@@ -74,7 +74,7 @@ public sealed class SemanticAnalyzer
 
     public ReturnStatement ActOnReturnStatement(Token keyword, Expression? value)
     {
-        var returnType = currentFunction!.ResolvedReturnType!;
+        var returnType = currentFunction!.ResolvedReturnType;
         if (value is null)
         {
             if (returnType != BuiltinType.Void)
@@ -131,7 +131,7 @@ public sealed class SemanticAnalyzer
         }
 
         var converted = arguments
-            .Zip(function.Parameters, (argument, parameter) => ConvertTo(argument, parameter.ResolvedType!))
+            .Zip(function.Parameters, (argument, parameter) => ConvertTo(argument, parameter.ResolvedType))
             .ToList();
         return new CallExpression(callee, converted) { Function = function, Type = function.ResolvedReturnType };
     }
@@ -139,7 +139,7 @@ public sealed class SemanticAnalyzer
     public UnaryExpression ActOnUnaryOperator(Token operatorToken, Expression operand)
     {
         RequireArithmetic(operand);
-        var type = BuiltinType.Promote(operand.Type!);
+        var type = BuiltinType.Promote(operand.Type);
         return new UnaryExpression(operatorToken, ConvertTo(operand, type)) { Type = type };
     }
 
@@ -149,7 +149,7 @@ public sealed class SemanticAnalyzer
         RequireArithmetic(right);
 
         // 両辺を共通の型にそろえてから計算する
-        var common = BuiltinType.UsualArithmeticConversion(left.Type!, right.Type!);
+        var common = BuiltinType.UsualArithmeticConversion(left.Type, right.Type);
         var isComparison = operatorToken.Kind is TokenKind.EqualEqual or TokenKind.NotEqual
             or TokenKind.Less or TokenKind.LessEqual or TokenKind.Greater or TokenKind.GreaterEqual;
 
@@ -160,7 +160,7 @@ public sealed class SemanticAnalyzer
     }
 
     public AssignmentExpression ActOnAssignment(DeclarationReferenceExpression target, Token operatorToken, Expression value) =>
-        new(target, operatorToken, ConvertTo(value, target.Type!)) { Type = target.Type };
+        new(target, operatorToken, ConvertTo(value, target.Type)) { Type = target.Type };
 
     // ---- 型 ----
 
@@ -180,7 +180,7 @@ public sealed class SemanticAnalyzer
 
     static void RequireArithmetic(Expression expression)
     {
-        if (!expression.Type!.IsArithmetic)
+        if (!expression.Type.IsArithmetic)
         {
             throw new CompileException($"invalid operand of type '{expression.Type}'", Offset(expression));
         }
