@@ -18,7 +18,12 @@ chibikko-cc/
 │   │   ├── CompileException.cs     # エラー報告(行・列は Offset から計算)
 │   │   ├── Type.cs                 # 型の定義、型比較、通常算術変換
 │   │   └── Ir/
-│   │       ├── Ir.cs               # 命令・基本ブロック・関数の定義
+│   │       ├── Ir.cs               # 関数の一覧(function_table)
+│   │       ├── IrFunction.cs       # 関数(シグネチャ・var_table・body)
+│   │       ├── Quadruple.cs        # 四つ組(ope, dst, src1, src2)
+│   │       ├── Operand.cs          # オペランド(変数・定数・ラベル・関数)
+│   │       ├── OperationType.cs    # 演算子
+│   │       ├── IrType.cs           # IR の値の型
 │   │       └── Dump.cs             # IR ダンプ(-emit-ir 用)
 │   ├── Frontend/
 │   │   ├── Token.cs                # TokenKind と Token(Kind, Offset, Length)
@@ -79,8 +84,8 @@ Program → Compiler(Interface)
 - Parser は構文を読み、構文要素ごとに SemanticAnalyzer の `ActOn*` を呼んでノードを受け取る(Clang の `Parser` と `Sema` の関係)。型の判断は SemanticAnalyzer だけが行い、Parser は型を見ない。
 - 解析は 1 パスなので、関数は呼び出しより前に定義する必要がある(C と同じ)。再帰呼び出しは本体を読む前にシグネチャを登録して許す。
 - 暗黙の型変換は SemanticAnalyzer が `ImplicitCastExpression` として AST に挿入し(Clang の `ImplicitCastExpr`)、IrGenerator が `signextend` `truncate` `inttofloat` などの変換命令に変換する(定数は畳み込む)。Backend は暗黙変換を扱わない。
-- IR は関数ごとの基本ブロックと 3 番地コードとする。値は型付き(`i1` `i8` `i32` `i64` `f32` `f64` `ptr`)とする。
-- IR の構造は Clang の `-O0` 出力に合わせる。変数・引数は entry 先頭の `alloca` で確保し `load` / `store` で読み書きする(引数は `n.addr` に格納)。return が複数ある関数は `retval` に格納して `return` ブロックへ飛ぶ。整数の除算・大小比較は符号付き(`.s`)とする。到達不能なブロックは生成後に取り除く。
+- IR は講義資料の四つ組(3 番地コード)とする。形式は `(ope, dst, src1, src2)` で、関数ごとに `var_table`(ローカル変数)と `body`(四つ組の列)を持つ。値は型付き(`i1` `i8` `i16` `i32` `i64` `f32` `f64`)とする。
+- 制御構造は `label` / `jf` / `jmp` で表す。関数呼び出しは `(call, dst, f)` とし、引数は四つ組の `Arguments` に持たせる。基本ブロックは最適化の段階で `label` / `jf` / `jmp` を境に分割して作る。
 - 最初はローカル変数をスタックスロットとして扱う。SSA 化は必要になった時点で Pass として追加する。
 
 ## 開発コマンド
