@@ -6,4 +6,5 @@ namespace Chibikko;
 public interface IFrontendPipeline
 {
     Ir Run(string source);
+    string DumpAst(string source);
 }

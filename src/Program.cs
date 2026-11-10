@@ -5,10 +5,10 @@ using Chibikko.Frontend;
 using Chibikko.Optimizer;
 
 
-var dumpIr = args.Length == 2 && args[0] == "--dump-ir";
-if (args.Length != 1 && !dumpIr)
+var option = args.Length == 2 ? args[0] : null;
+if (args.Length is not (1 or 2) || option is not (null or "--dump-ir" or "--dump-ast"))
 {
-    Console.Error.WriteLine("usage: chibikko [--dump-ir] <file>");
+    Console.Error.WriteLine("usage: chibikko [--dump-ast | --dump-ir] <file>");
     return 2;
 }
 
@@ -23,7 +23,12 @@ try
         new BackendPipeline()
     );
 
-    Console.Write(dumpIr ? compiler.DumpIr(source) : compiler.Compile(source));
+    Console.Write(option switch
+    {
+        "--dump-ast" => compiler.DumpAst(source),
+        "--dump-ir" => compiler.DumpIr(source),
+        _ => compiler.Compile(source),
+    });
     return 0;
 }
 catch (CompileException e)
