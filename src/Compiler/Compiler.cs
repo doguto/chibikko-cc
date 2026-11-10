@@ -16,5 +16,7 @@ public sealed class Compiler(
         return result;
     }
 
+    public string DumpAst(string source) => frontend.DumpAst(source);
+
     public string DumpIr(string source) => IrDumper.Dump(frontend.Run(source));
 }
