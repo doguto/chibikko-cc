@@ -242,7 +242,10 @@ public sealed class CodeGenerator
     // 0 なら je で対象ラベルへジャンプする
     void GenerateJumpIfFalse(Quadruple quadruple)
     {
-        throw new NotImplementedException("JumpIfFalse");
+        Label target = (quadruple.Source2 as Label)!;
+        LoadOperand(quadruple.Source1!, Register.rax);
+        code.AppendNewIndentedLine($"cmpq $0, {Register.rax.ToName()}");
+        code.AppendNewIndentedLine($"je {target.Name}");
     }
 
     // 引数をキューに積み、直後の Call でまとめて配置する

@@ -106,8 +106,8 @@ public class IrGenerator
 
     void GenerateIf(FunctionContext context, IfStatement ifStatement)
     {
-        var endLabel = new Label($"L{labelSuffix}");
-        var elseLabel = ifStatement.Else is null ? endLabel : new Label($"L{labelSuffix}");
+        var endLabel = new Label($"L{labelSuffix++}");
+        var elseLabel = ifStatement.Else is null ? endLabel : new Label($"L{labelSuffix++}");
 
         var condition = GenerateExpression(context, ifStatement.Condition);
         context.EmitJumpIfFalse(condition, elseLabel);
@@ -125,8 +125,8 @@ public class IrGenerator
 
     void GenerateWhile(FunctionContext context, WhileStatement whileStatement)
     {
-        var beginLabel = new Label($"L{labelSuffix}");
-        var endLabel = new Label($"L{labelSuffix}");
+        var beginLabel = new Label($"L{labelSuffix++}");
+        var endLabel = new Label($"L{labelSuffix++}");
 
         context.EmitLabel(beginLabel);
         var condition = GenerateExpression(context, whileStatement.Condition);
@@ -138,8 +138,8 @@ public class IrGenerator
 
     void GenerateFor(FunctionContext context, ForStatement forStatement)
     {
-        var beginLabel = new Label($"L{labelSuffix}");
-        var endLabel = new Label($"L{labelSuffix}");
+        var beginLabel = new Label($"L{labelSuffix++}");
+        var endLabel = new Label($"L{labelSuffix++}");
 
         if (forStatement.Initializer is not null)
         {
