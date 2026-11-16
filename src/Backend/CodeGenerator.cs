@@ -34,6 +34,7 @@ public sealed class CodeGenerator
         code.AppendNewIndentedLine($"pushq {Register.rbp.ToName()}");
         code.AppendNewIndentedLine($"movq {Register.rsp.ToName()}, {Register.rbp.ToName()}");
         if (frameSize != 0) code.AppendNewIndentedLine($"subq ${frameSize}, {Register.rsp.ToName()}");
+        EmitParameterSpill();
 
         foreach (var quadruple in context.Function.Body)
         {
@@ -285,6 +286,8 @@ public sealed class CodeGenerator
 
         var cleanup = stackArguments.Count * 8 + padding;
         if (cleanup != 0) code.AppendNewIndentedLine($"addq ${cleanup}, {Register.rsp.ToName()}");
+
+        if (quadruple.Destination is Variable destination) StoreOperand(Register.rax, destination);
     }
 
     void GenerateReturn(Quadruple quadruple)
@@ -293,6 +296,26 @@ public sealed class CodeGenerator
         code.AppendNewIndentedLine($"movq {Register.rbp.ToName()}, {Register.rsp.ToName()}");
         code.AppendNewIndentedLine($"popq {Register.rbp.ToName()}");
         code.AppendNewIndentedLine("ret");
+    }
+
+
+    // 引数レジスタおよび呼び出し元フレーム上の引数を自フレームの Parameter スロットへ書き込む
+    void EmitParameterSpill()
+    {
+        var registers = RegisterGroup.IntArgumentRegisters();
+        var parameters = context.Function.Parameters;
+        for (var i = 0; i < parameters.Count; i++)
+        {
+            if (i < registers.Count)
+            {
+                StoreOperand(registers[i], parameters[i]);
+                continue;
+            }
+
+            var callerOffset = 16 + 8 * (i - registers.Count);
+            code.AppendNewIndentedLine($"movq {callerOffset}({Register.rbp.ToName()}), {Register.rax.ToName()}");
+            StoreOperand(Register.rax, parameters[i]);
+        }
     }
 
 
