@@ -42,8 +42,8 @@ public class StackFrame
     {
         foreach (var piece in pieces)
         {
-            if (piece.Variable is { } variable) variableOffsets![variable] = offset;
             offset += piece.Width;
+            if (piece.Variable is { } variable) variableOffsets![variable] = offset;
         }
     }
 }

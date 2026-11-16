@@ -10,7 +10,7 @@ namespace Chibikko.Frontend;
 public class IrGenerator
 {
     // 関数 SymbolTable
-    readonly Dictionary<FunctionDeclaration, IrFunction> functionsTable = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<string, IrFunction> functionsTable = new();
 
     int labelSuffix = 1;
 
@@ -23,13 +23,13 @@ public class IrGenerator
             var returnType = functionDeclaration.ResolvedReturnType;
             IrType? irType = returnType == BuiltinType.Void ? null : returnType.ToIrType();
             IrFunction irFunction = new(functionDeclaration.Name.Text, irType);
-            functionsTable[functionDeclaration] = irFunction;
+            functionsTable[functionDeclaration.Name.Text] = irFunction;
             ir.Functions.Add(irFunction);
         }
 
         foreach (var functionDeclaration in translationUnit.Functions)
         {
-            GenerateFunctionIr(functionsTable[functionDeclaration], functionDeclaration);
+            GenerateFunctionIr(functionsTable[functionDeclaration.Name.Text], functionDeclaration);
         }
 
         return ir;
@@ -201,7 +201,7 @@ public class IrGenerator
             context.Emit(new Quadruple { OperationType = OperationType.Param, Source1 = argument });
         }
 
-        var function = functionsTable[call.Function!];
+        var function = functionsTable[call.Function!.Name.Text];
         var result = function.ReturnType is { } returnType ? context.NewTemporary(returnType) : null;
         context.Emit(new Quadruple
         {
