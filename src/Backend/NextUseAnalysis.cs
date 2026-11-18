@@ -31,6 +31,9 @@ public static class NextUseAnalysis
         Dictionary<Quadruple, NextUseInfo> instructions = new(ReferenceEqualityComparer.Instance);
         NextUseInfo? terminator = null;
 
+        var operands = block.Instructions.SelectMany(q => q.Uses().Concat(q.Defs())).Concat(block.Terminator?.Uses() ?? []);
+        foreach (var operand in operands) table[operand] = new NextUse(!operand.IsTemporary, null);
+
         var position = block.Instructions.Count;
         if (block.Terminator is { } blockTerminator)
         {
@@ -62,7 +65,7 @@ public static class NextUseAnalysis
     static NextUseInfo Record(Dictionary<Variable, NextUse> table, IEnumerable<Variable> operands)
     {
         Dictionary<Variable, NextUse> snapshot = new(ReferenceEqualityComparer.Instance);
-        foreach (var operand in operands) snapshot[operand] = Lookup(table, operand);
+        foreach (var operand in operands) snapshot[operand] = table[operand];
         return new NextUseInfo(snapshot);
     }
 
@@ -70,7 +73,4 @@ public static class NextUseAnalysis
     {
         foreach (var use in uses) table[use] = new NextUse(true, position);
     }
-
-    static NextUse Lookup(Dictionary<Variable, NextUse> table, Variable variable) =>
-        table.TryGetValue(variable, out var nextUse) ? nextUse : new NextUse(!variable.IsTemporary, null);
 }
