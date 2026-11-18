@@ -28,7 +28,7 @@ public sealed class CodeGenerator
 
     void EmitFunction()
     {
-        var frameSize = (context.Frame.Size + 15) / 16 * 16;
+        var frameSize = context.Frame.Size;
         code.AppendNewIndentedLine($".globl {context.Function.Name}");
         code.AppendNewLine($"{context.Function.Name}:");
         code.AppendNewIndentedLine($"pushq {Register.rbp.ToName()}");
@@ -299,22 +299,15 @@ public sealed class CodeGenerator
     }
 
 
-    // 引数レジスタおよび呼び出し元フレーム上の引数を自フレームの Parameter スロットへ書き込む
+    // 引数レジスタを自フレームの Parameter スロットへ書き込む
+    // 7 個目以降の引数は呼び出し元フレーム上 (16(%rbp) 以降) をそのまま参照する
     void EmitParameterSpill()
     {
         var registers = RegisterGroup.IntArgumentRegisters();
         var parameters = context.Function.Parameters;
-        for (var i = 0; i < parameters.Count; i++)
+        for (var i = 0; i < Math.Min(parameters.Count, registers.Count); i++)
         {
-            if (i < registers.Count)
-            {
-                StoreOperand(registers[i], parameters[i]);
-                continue;
-            }
-
-            var callerOffset = 16 + 8 * (i - registers.Count);
-            code.AppendNewIndentedLine($"movq {callerOffset}({Register.rbp.ToName()}), {Register.rax.ToName()}");
-            StoreOperand(Register.rax, parameters[i]);
+            StoreOperand(registers[i], parameters[i]);
         }
     }
 
@@ -333,7 +326,7 @@ public sealed class CodeGenerator
                 // bp から offset 分ずらしたアドレスの内容をレジスタにコピーする
                 var suffix = variable.Type.GetAssemblySuffix();
                 var instruction = suffix == 'q' ? "movq" : $"movs{suffix}q";
-                code.AppendNewIndentedLine($"{instruction} -{context.OffsetOf(variable)}({Register.rbp.ToName()}), {register.ToName()}");
+                code.AppendNewIndentedLine($"{instruction} {context.OffsetOf(variable)}({Register.rbp.ToName()}), {register.ToName()}");
                 break;
             default:
                 throw new NotSupportedException($"Unsupported Operand: {operand.GetType().Name}");
@@ -345,6 +338,6 @@ public sealed class CodeGenerator
     {
         var suffix = destination.Type.GetAssemblySuffix();
         var sized = source.ToSized(destination.Type.GetWidth());
-        code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, -{context.OffsetOf(destination)}({Register.rbp.ToName()})");
+        code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, {context.OffsetOf(destination)}({Register.rbp.ToName()})");
     }
 }
