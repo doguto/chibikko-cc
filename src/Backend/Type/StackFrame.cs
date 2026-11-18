@@ -1,50 +1,59 @@
-using Chibikko.Common;
 using Chibikko.Common.Ir;
 
 namespace Chibikko.Backend.Type;
 
 public class StackFrame
 {
-    public required List<StackPiece> Parameters { get; init; }
-    public required StackPiece ReturnedValue { get; init; }
-    public required StackPiece ControlLink { get; init; }
-    public required List<StackPiece> SavedMachineState { get; init; }
+    public const int MemoryArgumentsOffset = 16;
+    public const int ReturnAddressOffset = 8;
+    public const int PreviousBasePointerOffset = 0;
+    public const int Alignment = 16;
+
+    public required List<StackPiece> MemoryArguments { get; init; }
+    public required List<StackPiece> RegisterParameters { get; init; }
     public required List<StackPiece> LocalVariables { get; init; }
     public required List<StackPiece> TemporaryVariables { get; init; }
 
-    public int ParametersOffset => 0;
-    public int ReturnedValueOffset => ParametersOffset + Parameters.Sum(x => x.Width);
-    public int ControlLinkOffset => ReturnedValueOffset + ReturnedValue.Width;
-    public int SavedMachineStateOffset => ControlLinkOffset + ControlLink.Width;
-    public int LocalVariablesOffset => SavedMachineStateOffset + SavedMachineState.Sum(x => x.Width);
-    public int TemporaryVariablesOffset => LocalVariablesOffset + LocalVariables.Sum(x => x.Width);
-    public int Size => TemporaryVariablesOffset + TemporaryVariables.Sum(x => x.Width);
+    public int Size
+    {
+        get
+        {
+            var size = -Layout().Bottom;
+            return (size + Alignment - 1) / Alignment * Alignment;
+        }
+    }
 
-    Dictionary<Variable, int>? variableOffsets;
+    (Dictionary<Variable, int> Offsets, int Bottom)? layout;
 
     public int OffsetOf(Variable variable) =>
-        VariableOffsets().TryGetValue(variable, out var offset)
+        Layout().Offsets.TryGetValue(variable, out var offset)
             ? offset
             : throw new InvalidOperationException($"variable not found in stack frame: {variable.Name ?? "<temp>"}");
 
-    Dictionary<Variable, int> VariableOffsets()
+    (Dictionary<Variable, int> Offsets, int Bottom) Layout()
     {
-        if (variableOffsets is not null) return variableOffsets;
+        if (layout is { } cached) return cached;
 
-        variableOffsets = new(ReferenceEqualityComparer.Instance);
-        PlaceVariables(Parameters, ParametersOffset);
-        PlaceVariables(LocalVariables, LocalVariablesOffset);
-        PlaceVariables(TemporaryVariables, TemporaryVariablesOffset);
-        return variableOffsets;
-    }
+        Dictionary<Variable, int> offsets = new(ReferenceEqualityComparer.Instance);
 
-    void PlaceVariables(List<StackPiece> pieces, int offset)
-    {
-        foreach (var piece in pieces)
+        var above = MemoryArgumentsOffset;
+        foreach (var piece in MemoryArguments)
         {
-            offset += piece.Width;
-            if (piece.Variable is { } variable) variableOffsets![variable] = offset;
+            if (piece.Variable is { } variable) offsets[variable] = above;
+            above += 8;
         }
+
+        var below = PreviousBasePointerOffset;
+        foreach (var piece in RegisterParameters.Concat(LocalVariables).Concat(TemporaryVariables))
+        {
+            var width = Math.Max(piece.Width, 1);
+            below -= width;
+            below = -((-below + width - 1) / width * width);
+            if (piece.Variable is { } variable) offsets[variable] = below;
+        }
+
+        layout = (offsets, below);
+        return layout.Value;
     }
 }
 
