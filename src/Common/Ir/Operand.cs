@@ -24,11 +24,6 @@ public class FloatConstant(IrType type, double value) : Constant(type)
     public double Value { get; } = value;
 }
 
-public class Label(string name) : Operand
-{
-    public string Name { get; } = name;
-}
-
 public class FunctionRef(IrFunction function) : Operand
 {
     public IrFunction Function { get; } = function;

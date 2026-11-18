@@ -36,7 +36,19 @@ public sealed class CodeGenerator
         if (frameSize != 0) code.AppendNewIndentedLine($"subq ${frameSize}, {Register.rsp.ToName()}");
         EmitParameterSpill();
 
-        foreach (var quadruple in context.Function.Body)
+        var blocks = context.Function.Blocks;
+        for (var i = 0; i < blocks.Count; i++)
+        {
+            var next = i + 1 < blocks.Count ? blocks[i + 1] : null;
+            EmitBlock(blocks[i], next);
+        }
+    }
+
+    void EmitBlock(BasicBlock block, BasicBlock? next)
+    {
+        if (block != context.Function.Blocks[0]) code.AppendNewLine($"{BlockLabel(block)}:");
+
+        foreach (var quadruple in block.Instructions)
         {
             switch (quadruple.OperationType)
             {
@@ -79,15 +91,6 @@ public sealed class CodeGenerator
                     GenerateGreaterThanOrEqual(quadruple);
                     break;
 
-                case OperationType.Label:
-                    GenerateLabel(quadruple);
-                    break;
-                case OperationType.Jump:
-                    GenerateJump(quadruple);
-                    break;
-                case OperationType.JumpIfFalse:
-                    GenerateJumpIfFalse(quadruple);
-                    break;
 
                 case OperationType.Param:
                     GenerateParam(quadruple);
@@ -95,15 +98,29 @@ public sealed class CodeGenerator
                 case OperationType.Call:
                     GenerateCall(quadruple);
                     break;
-                case OperationType.Return:
-                    GenerateReturn(quadruple);
-                    break;
 
                 default:
                     throw new UnreachableException($"Unknown operation type: {quadruple.OperationType}");
             }
         }
+
+        switch (block.Terminator)
+        {
+            case Jump jump:
+                GenerateJump(jump, next);
+                break;
+            case Branch branch:
+                GenerateBranch(branch, next);
+                break;
+            case Return @return:
+                GenerateReturn(@return);
+                break;
+            default:
+                throw new UnreachableException($"Block has no terminator: {block.Name}");
+        }
     }
+
+    string BlockLabel(BasicBlock block) => $".L{context.Function.Name}.{context.Function.Blocks.IndexOf(block)}";
 
     // Source1 を rax にロードし、Destination の幅で書き戻す
     void GenerateAssign(Quadruple quadruple)
@@ -225,28 +242,20 @@ public sealed class CodeGenerator
         StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
     }
 
-    // ラベル名をインデントなしで出力する
-    void GenerateLabel(Quadruple quadruple)
+    // 次のブロックへのジャンプは省略する
+    void GenerateJump(Jump jump, BasicBlock? next)
     {
-        Label label = (quadruple.Source1 as Label)!;
-        code.AppendNewLine($"{label.Name}:");
-    }
-
-    // 対象ラベルへ無条件に jmp する
-    void GenerateJump(Quadruple quadruple)
-    {
-        Label target = (quadruple.Source1 as Label)!;
-        code.AppendNewIndentedLine($"jmp {target.Name}");
+        if (jump.Target != next) code.AppendNewIndentedLine($"jmp {BlockLabel(jump.Target)}");
     }
 
     // 条件を rax にロードし cmpq $0, %rax
-    // 0 なら je で対象ラベルへジャンプする
-    void GenerateJumpIfFalse(Quadruple quadruple)
+    // 0 なら je で Else へ、そうでなければ Then へ進む。Then が次のブロックなら jmp を省略する
+    void GenerateBranch(Branch branch, BasicBlock? next)
     {
-        Label target = (quadruple.Source2 as Label)!;
-        LoadOperand(quadruple.Source1!, Register.rax);
+        LoadOperand(branch.Condition, Register.rax);
         code.AppendNewIndentedLine($"cmpq $0, {Register.rax.ToName()}");
-        code.AppendNewIndentedLine($"je {target.Name}");
+        code.AppendNewIndentedLine($"je {BlockLabel(branch.Else)}");
+        if (branch.Then != next) code.AppendNewIndentedLine($"jmp {BlockLabel(branch.Then)}");
     }
 
     // 引数をキューに積み、直後の Call でまとめて配置する
@@ -290,9 +299,9 @@ public sealed class CodeGenerator
         if (quadruple.Destination is Variable destination) StoreOperand(Register.rax, destination);
     }
 
-    void GenerateReturn(Quadruple quadruple)
+    void GenerateReturn(Return @return)
     {
-        if (quadruple.Source1 is { } value) LoadOperand(value, Register.rax);
+        if (@return.Value is { } value) LoadOperand(value, Register.rax);
         code.AppendNewIndentedLine($"movq {Register.rbp.ToName()}, {Register.rsp.ToName()}");
         code.AppendNewIndentedLine($"popq {Register.rbp.ToName()}");
         code.AppendNewIndentedLine("ret");
