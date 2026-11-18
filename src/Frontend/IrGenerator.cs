@@ -12,8 +12,6 @@ public class IrGenerator
     // 関数 SymbolTable
     readonly Dictionary<string, IrFunction> functionsTable = new();
 
-    int labelSuffix = 1;
-
     public Ir Generate(TranslationUnit translationUnit)
     {
         Ir ir = new();
@@ -47,7 +45,11 @@ public class IrGenerator
         }
 
         GenerateStatement(context, functionDeclaration.Body);
-        context.Emit(new Quadruple { OperationType = OperationType.Return });
+        if (context.CurrentBlock.Terminator is null)
+        {
+            Operand? value = irFunction.Name == "main" && irFunction.ReturnType is { } returnType ? new IntegerConstant(returnType, 0) : null;
+            context.Terminate(new Return(value));
+        }
     }
 
     void GenerateStatement(FunctionContext context, Statement statement)
@@ -101,66 +103,87 @@ public class IrGenerator
     void GenerateReturn(FunctionContext context, ReturnStatement returnStatement)
     {
         var value = returnStatement.Value is null ? null : GenerateExpression(context, returnStatement.Value);
-        context.Emit(new Quadruple { OperationType = OperationType.Return, Source1 = value });
+        context.Terminate(new Return(value));
     }
 
     void GenerateIf(FunctionContext context, IfStatement ifStatement)
     {
-        var endLabel = new Label($"L{labelSuffix++}");
-        var elseLabel = ifStatement.Else is null ? endLabel : new Label($"L{labelSuffix++}");
+        var thenBlock = context.NewBlock("if.then");
+        var endBlock = context.NewBlock("if.end");
+        var elseBlock = ifStatement.Else is null ? endBlock : context.NewBlock("if.else");
 
         var condition = GenerateExpression(context, ifStatement.Condition);
-        context.EmitJumpIfFalse(condition, elseLabel);
+        context.EmitBranch(condition, thenBlock, elseBlock);
+
+        context.SetInsertPoint(thenBlock);
         GenerateStatement(context, ifStatement.Then);
+        context.EmitJump(endBlock);
 
         if (ifStatement.Else is not null)
         {
-            context.EmitJump(endLabel);
-            context.EmitLabel(elseLabel);
+            context.SetInsertPoint(elseBlock);
             GenerateStatement(context, ifStatement.Else);
+            context.EmitJump(endBlock);
         }
 
-        context.EmitLabel(endLabel);
+        context.SetInsertPoint(endBlock);
     }
 
     void GenerateWhile(FunctionContext context, WhileStatement whileStatement)
     {
-        var beginLabel = new Label($"L{labelSuffix++}");
-        var endLabel = new Label($"L{labelSuffix++}");
+        var conditionBlock = context.NewBlock("while.cond");
+        var bodyBlock = context.NewBlock("while.body");
+        var endBlock = context.NewBlock("while.end");
 
-        context.EmitLabel(beginLabel);
+        context.EmitJump(conditionBlock);
+
+        context.SetInsertPoint(conditionBlock);
         var condition = GenerateExpression(context, whileStatement.Condition);
-        context.EmitJumpIfFalse(condition, endLabel);
+        context.EmitBranch(condition, bodyBlock, endBlock);
+
+        context.SetInsertPoint(bodyBlock);
         GenerateStatement(context, whileStatement.Body);
-        context.EmitJump(beginLabel);
-        context.EmitLabel(endLabel);
+        context.EmitJump(conditionBlock);
+
+        context.SetInsertPoint(endBlock);
     }
 
     void GenerateFor(FunctionContext context, ForStatement forStatement)
     {
-        var beginLabel = new Label($"L{labelSuffix++}");
-        var endLabel = new Label($"L{labelSuffix++}");
+        var conditionBlock = context.NewBlock("for.cond");
+        var bodyBlock = context.NewBlock("for.body");
+        var stepBlock = context.NewBlock("for.step");
+        var endBlock = context.NewBlock("for.end");
 
         if (forStatement.Initializer is not null)
         {
             GenerateExpression(context, forStatement.Initializer);
         }
+        context.EmitJump(conditionBlock);
 
-        context.EmitLabel(beginLabel);
+        context.SetInsertPoint(conditionBlock);
         if (forStatement.Condition is not null)
         {
             var condition = GenerateExpression(context, forStatement.Condition);
-            context.EmitJumpIfFalse(condition, endLabel);
+            context.EmitBranch(condition, bodyBlock, endBlock);
+        }
+        else
+        {
+            context.EmitJump(bodyBlock);
         }
 
+        context.SetInsertPoint(bodyBlock);
         GenerateStatement(context, forStatement.Body);
+        context.EmitJump(stepBlock);
+
+        context.SetInsertPoint(stepBlock);
         if (forStatement.Step is not null)
         {
             GenerateExpression(context, forStatement.Step);
         }
+        context.EmitJump(conditionBlock);
 
-        context.EmitJump(beginLabel);
-        context.EmitLabel(endLabel);
+        context.SetInsertPoint(endBlock);
     }
 
     Operand GenerateExpression(FunctionContext context, Expression expression)

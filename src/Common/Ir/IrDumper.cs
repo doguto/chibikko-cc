@@ -50,16 +50,33 @@ public static class IrDumper
         }
 
         builder.AppendLine("  body:");
-        var rows = function.Body.Select(q => QuadrupleFields(q, names)).ToList();
+        var rows = function.Blocks.SelectMany(b => b.Instructions).Select(q => QuadrupleFields(q, names)).ToList();
         var widths = Enumerable.Range(0, 3)
             .Select(i => rows.Select(row => row[i].Length).DefaultIfEmpty(0).Max() + 1)
             .ToArray();
-        foreach (var row in rows)
+        foreach (var block in function.Blocks)
         {
-            var aligned = Enumerable.Range(0, 3).Select(i => (row[i] + ",").PadRight(widths[i]));
-            builder.AppendLine($"    ({string.Join(" ", aligned)} {row[3]})");
+            var predecessors = block.Predecessors.Count == 0 ? "" : $"  ; preds = {string.Join(", ", block.Predecessors.Select(p => p.Name))}";
+            builder.AppendLine($"  {block.Name}:{predecessors}");
+            foreach (var quadruple in block.Instructions)
+            {
+                var row = QuadrupleFields(quadruple, names);
+                var aligned = Enumerable.Range(0, 3).Select(i => (row[i] + ",").PadRight(widths[i]));
+                builder.AppendLine($"    ({string.Join(" ", aligned)} {row[3]})");
+            }
+            builder.AppendLine($"    {TerminatorText(block.Terminator, names)}");
         }
     }
+
+    static string TerminatorText(Terminator? terminator, Names names) => terminator switch
+    {
+        Jump jump => $"jump {jump.Target.Name}",
+        Branch branch => $"branch {names.Of(branch.Condition)}, {branch.Then.Name}, {branch.Else.Name}",
+        Return { Value: { } value } => $"return {names.Of(value)}",
+        Return => "return",
+        null => "<no terminator>",
+        _ => throw new NotSupportedException($"Unsupported terminator: {terminator.GetType().Name}"),
+    };
 
     static string ReturnTypeName(IrFunction function) => function.ReturnType?.ToString() ?? "void";
 
@@ -74,12 +91,10 @@ public static class IrDumper
     {
         readonly Dictionary<Operand, string> names = new(ReferenceEqualityComparer.Instance);
         int variableCount;
-        int labelCount;
 
         public string Of(Operand operand) => operand switch
         {
             Variable variable => names.TryGetValue(variable, out var name) ? name : names[variable] = NameOf(variable),
-            Label label => names.TryGetValue(label, out var name) ? name : names[label] = $"L{labelCount++}",
             IntegerConstant constant => $"{constant.Value}:{constant.Type}",
             FloatConstant constant => $"{constant.Value.ToString("R", CultureInfo.InvariantCulture)}:{constant.Type}",
             FunctionRef function => $"@{function.Function.Name}",
