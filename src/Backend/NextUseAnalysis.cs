@@ -20,6 +20,9 @@ public sealed class BlockNextUse(Dictionary<Quadruple, NextUseInfo> instructions
         terminator ?? throw new InvalidOperationException("block has no terminator");
 }
 
+// TODO: 現状はレジスタ割り当て専用のため Backend に置いている
+// ブロック出口で名前付き変数を生存とみなす仮定はコード生成の書き戻し方針に依存する
+// 最適化パスから利用する場合や CFG 全体の生存変数解析を導入する場合は Common への移動を検討する
 public static class NextUseAnalysis
 {
     public static BlockNextUse Analyze(BasicBlock block)
