@@ -23,16 +23,16 @@ public class StackFrame
         }
     }
 
-    (Dictionary<Variable, int> Offsets, int Bottom)? layout;
+    StackLayout? layout;
 
     public int OffsetOf(Variable variable) =>
         Layout().Offsets.TryGetValue(variable, out var offset)
             ? offset
             : throw new InvalidOperationException($"variable not found in stack frame: {variable.Name ?? "<temp>"}");
 
-    (Dictionary<Variable, int> Offsets, int Bottom) Layout()
+    StackLayout Layout()
     {
-        if (layout is { } cached) return cached;
+        if (layout is not null) return layout;
 
         Dictionary<Variable, int> offsets = new(ReferenceEqualityComparer.Instance);
 
@@ -52,10 +52,12 @@ public class StackFrame
             if (piece.Variable is { } variable) offsets[variable] = below;
         }
 
-        layout = (offsets, below);
-        return layout.Value;
+        layout = new StackLayout(offsets, below);
+        return layout;
     }
 }
+
+public record StackLayout(Dictionary<Variable, int> Offsets, int Bottom);
 
 public record StackPiece(IrType? type, Variable? Variable = null)
 {
