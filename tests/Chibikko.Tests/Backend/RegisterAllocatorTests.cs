@@ -35,7 +35,7 @@ public class RegisterAllocatorTests
     public void Register_IsReusedAfterLastUse()
     {
         var function = Main("int a = 1; int b = 2; int c = 3; int x = (a + b) * c; return x;");
-        var result = new RegisterAllocator([Register.rbx]).Allocate(function);
+        var result = new RegisterAllocator([], [Register.rbx]).Allocate(function);
 
         var entry = function.Blocks[0];
         var multiply = Find(entry, OperationType.Multiply);
@@ -51,7 +51,7 @@ public class RegisterAllocatorTests
     public void Destination_PrefersSource1Register_WhenSource1Dies()
     {
         var function = Main("int a = 1; int b = 2; int c = 3; int x = (a + b) + (a - b) * c; return x;");
-        var result = new RegisterAllocator([Register.rbx, Register.r12, Register.r13]).Allocate(function);
+        var result = new RegisterAllocator([], [Register.rbx, Register.r12, Register.r13]).Allocate(function);
 
         var entry = function.Blocks[0];
         var subtract = Find(entry, OperationType.Subtract);
@@ -67,7 +67,7 @@ public class RegisterAllocatorTests
     public void Farthest_IsSpilled_WhenNoRegisterIsFree()
     {
         var function = Main("int a = 1; int b = 2; int x = (a + b) * (a - b); return x;");
-        var result = new RegisterAllocator([Register.rbx]).Allocate(function);
+        var result = new RegisterAllocator([], [Register.rbx]).Allocate(function);
 
         var entry = function.Blocks[0];
         var add = Find(entry, OperationType.Add);
@@ -86,7 +86,7 @@ public class RegisterAllocatorTests
     public void Victim_IsSpilledBeforeInstruction_WhenItsNextUseIsFarther()
     {
         var function = Main("int a = 1; int b = 2; int c = 3; int x = (a + b) * (c * (a - b)); return x;");
-        var result = new RegisterAllocator([Register.rbx]).Allocate(function);
+        var result = new RegisterAllocator([], [Register.rbx]).Allocate(function);
 
         var entry = function.Blocks[0];
         var add = Find(entry, OperationType.Add);
@@ -119,6 +119,45 @@ public class RegisterAllocatorTests
         var function = Main("int a = 1; int b = 2; return a + b;");
         var result = new RegisterAllocator().Allocate(function);
 
-        Assert.Equal([Register.rbx], result.UsedRegisters);
+        Assert.Equal([Register.r10], result.UsedRegisters);
+    }
+
+    [Fact]
+    public void Temporary_UsesCallerSaved_WhenNotCrossingCall()
+    {
+        var function = Function("int f(int x) { return x; } int main() { int a = 1; return f(a + 1); }");
+        var result = new RegisterAllocator().Allocate(function);
+
+        var entry = function.Blocks[0];
+        var add = Find(entry, OperationType.Add);
+        var t = (Variable)add.Destination!;
+
+        Assert.Equal(new InRegister(Register.r10), result.Of(add).Of(t));
+    }
+
+    [Fact]
+    public void Temporary_UsesCalleeSaved_WhenCrossingCall()
+    {
+        var function = Function("int g(int x) { return x; } int f(int x, int y) { return x + y; } int main() { int a = 1; return f(a + 1, g(a)); }");
+        var result = new RegisterAllocator().Allocate(function);
+
+        var entry = function.Blocks[0];
+        var add = Find(entry, OperationType.Add);
+        var t = (Variable)add.Destination!;
+
+        Assert.Equal(new InRegister(Register.rbx), result.Of(add).Of(t));
+    }
+
+    [Fact]
+    public void Temporary_IsSpilled_WhenCrossingCallWithoutCalleeSaved()
+    {
+        var function = Function("int g(int x) { return x; } int f(int x, int y) { return x + y; } int main() { int a = 1; return f(a + 1, g(a)); }");
+        var result = new RegisterAllocator([Register.r10], []).Allocate(function);
+
+        var entry = function.Blocks[0];
+        var add = Find(entry, OperationType.Add);
+        var t = (Variable)add.Destination!;
+
+        Assert.IsType<OnStack>(result.Of(add).Of(t));
     }
 }

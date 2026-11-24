@@ -120,7 +120,16 @@ public static class RegisterGroup
         };
     }
 
-    public static List<Register> AllocatableRegisters()
+    public static List<Register> CallerSavedAllocatableRegisters()
+    {
+        return new List<Register>()
+        {
+            Register.r10,
+            Register.r11,
+        };
+    }
+
+    public static List<Register> CalleeSavedAllocatableRegisters()
     {
         return new List<Register>()
         {

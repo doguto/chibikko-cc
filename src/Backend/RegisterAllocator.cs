@@ -3,14 +3,20 @@ using Chibikko.Common.Ir;
 
 namespace Chibikko.Backend;
 
-public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
+public sealed class RegisterAllocator(
+    IReadOnlyList<Register> callerSavedRegisters,
+    IReadOnlyList<Register> calleeSavedRegisters
+)
 {
     readonly Dictionary<Register, Variable> registerTable = new();
     readonly Dictionary<Variable, Location> locationTable = new(ReferenceEqualityComparer.Instance);
     readonly HashSet<Register> usedRegisters = [];
     readonly HashSet<Variable> spilledTemps = new(ReferenceEqualityComparer.Instance);
 
-    public RegisterAllocator() : this(RegisterGroup.AllocatableRegisters())
+    public RegisterAllocator() : this(
+        RegisterGroup.CallerSavedAllocatableRegisters(),
+        RegisterGroup.CalleeSavedAllocatableRegisters()
+    )
     {
     }
 
@@ -22,6 +28,11 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
         foreach (var block in function.Blocks)
         {
             var nextUses = NextUseAnalysis.Analyze(block);
+            var calls = block.Instructions
+                .Select((quadruple, position) => (quadruple, position))
+                .Where(x => x.quadruple.OperationType == OperationType.Call)
+                .Select(x => x.position)
+                .ToList();
 
             for (var position = 0; position < block.Instructions.Count; position++)
             {
@@ -32,6 +43,7 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
                     quadruple.Defs(),
                     nextUses.Of(quadruple),
                     nextUses,
+                    calls,
                     position
                 );
             }
@@ -44,6 +56,7 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
                     [],
                     nextUses.OfTerminator(),
                     nextUses,
+                    calls,
                     block.Instructions.Count
                 );
             }
@@ -63,6 +76,7 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
         IEnumerable<Variable> defs,
         NextUseInfo nextUse,
         BlockNextUse nextUses,
+        List<int> calls,
         int position
     )
     {
@@ -92,7 +106,8 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
         {
             if (!locationTable.ContainsKey(def))
             {
-                locationTable[def] = Assign(def, nextUse.Of(def), nextUses, position, preferred, spills);
+                var crossesCall = nextUses.LastUse(def) is { } lastUse && calls.Any(p => position < p && p < lastUse);
+                locationTable[def] = Assign(def, nextUse.Of(def), nextUses, position, crossesCall, preferred, spills);
             }
             operands[def] = locationTable[def];
             if (!nextUse.Of(def).IsLive) Free(def);
@@ -106,16 +121,31 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
         NextUse nextUse,
         BlockNextUse nextUses,
         int position,
+        bool crossesCall,
         Register? preferred,
         List<Spill> spills
     )
     {
-        if (preferred is { } reusable && !registerTable.ContainsKey(reusable)) return Occupy(reusable, temp);
+        var candidates = crossesCall
+            ? calleeSavedRegisters
+            : callerSavedRegisters.Concat(calleeSavedRegisters).ToList();
 
-        var free = usableRegisters.Where(r => !registerTable.ContainsKey(r)).Cast<Register?>().FirstOrDefault();
+        if (preferred is { } reusable && candidates.Contains(reusable) && !registerTable.ContainsKey(reusable))
+        {
+            return Occupy(reusable, temp);
+        }
+
+        var free = candidates.Where(r => !registerTable.ContainsKey(r)).Cast<Register?>().FirstOrDefault();
         if (free is { } register) return Occupy(register, temp);
 
-        var victim = registerTable
+        var victims = registerTable.Where(x => candidates.Contains(x.Key)).ToList();
+        if (victims.Count == 0)
+        {
+            spilledTemps.Add(temp);
+            return new OnStack();
+        }
+
+        var victim = victims
             .Select(x => (
                 Register: x.Key,
                 Temp: x.Value,

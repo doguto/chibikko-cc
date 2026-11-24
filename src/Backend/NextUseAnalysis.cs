@@ -23,6 +23,9 @@ public sealed class BlockNextUse(
     public NextUseInfo OfTerminator() =>
         terminator ?? throw new InvalidOperationException("block has no terminator");
 
+    public int? LastUse(Variable variable) =>
+        usePositions.TryGetValue(variable, out var positions) ? positions[^1] : null;
+
     public int? NextUseAfter(Variable variable, int position)
     {
         if (!usePositions.TryGetValue(variable, out var positions)) return null;

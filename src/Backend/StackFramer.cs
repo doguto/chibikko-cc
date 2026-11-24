@@ -23,7 +23,7 @@ public class StackFramer
             RegisterParameters = registerParameters,
             LocalVariables = localVariables,
             TemporaryVariables = temporaryVariables,
-            SavedRegisters = RegisterGroup.AllocatableRegisters().Where(allocation.UsedRegisters.Contains).ToList()
+            SavedRegisters = RegisterGroup.CalleeSavedAllocatableRegisters().Where(allocation.UsedRegisters.Contains).ToList()
         };
 
         return stackFrame;
