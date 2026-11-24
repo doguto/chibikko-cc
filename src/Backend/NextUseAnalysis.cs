@@ -12,12 +12,20 @@ public sealed class NextUseInfo(IReadOnlyDictionary<Variable, NextUse> operands)
             : throw new InvalidOperationException($"variable is not an operand: {variable.Name ?? "<temp>"}");
 }
 
-public sealed class BlockNextUse(Dictionary<Quadruple, NextUseInfo> instructions, NextUseInfo? terminator)
+public sealed class BlockNextUse(
+    Dictionary<Quadruple, NextUseInfo> instructions,
+    NextUseInfo? terminator,
+    Dictionary<Variable, List<int>> usePositions)
 {
     public NextUseInfo Of(Quadruple quadruple) => instructions[quadruple];
 
     public NextUseInfo OfTerminator() =>
         terminator ?? throw new InvalidOperationException("block has no terminator");
+
+    public int? NextUseAfter(Variable variable, int position) =>
+        usePositions.TryGetValue(variable, out var positions) && positions.FirstOrDefault(p => p > position, -1) is var next and >= 0
+            ? next
+            : null;
 }
 
 // TODO: 現状はレジスタ割り当て専用のため Backend に置いている
@@ -30,6 +38,7 @@ public static class NextUseAnalysis
         Dictionary<Variable, NextUse> table = new(ReferenceEqualityComparer.Instance);
         Dictionary<Quadruple, NextUseInfo> instructions = new(ReferenceEqualityComparer.Instance);
         NextUseInfo? terminator = null;
+        Dictionary<Variable, List<int>> usePositions = new(ReferenceEqualityComparer.Instance);
 
         var operands = block.Instructions.SelectMany(q => q.Uses().Concat(q.Defs())).Concat(block.Terminator?.Uses() ?? []);
         foreach (var operand in operands) table[operand] = new NextUse(!operand.IsTemporary, null);
@@ -59,7 +68,13 @@ public static class NextUseAnalysis
             throw new InvalidOperationException($"temporary variable is live on entry to block: {block.Name}");
         }
 
-        return new BlockNextUse(instructions, terminator);
+        for (var i = 0; i < block.Instructions.Count; i++)
+        {
+            foreach (var use in block.Instructions[i].Uses()) AddUsePosition(usePositions, use, i);
+        }
+        foreach (var use in block.Terminator?.Uses() ?? []) AddUsePosition(usePositions, use, block.Instructions.Count);
+
+        return new BlockNextUse(instructions, terminator, usePositions);
     }
 
     static NextUseInfo Record(Dictionary<Variable, NextUse> table, IEnumerable<Variable> operands)
@@ -67,6 +82,16 @@ public static class NextUseAnalysis
         Dictionary<Variable, NextUse> snapshot = new(ReferenceEqualityComparer.Instance);
         foreach (var operand in operands) snapshot[operand] = table[operand];
         return new NextUseInfo(snapshot);
+    }
+
+    static void AddUsePosition(Dictionary<Variable, List<int>> usePositions, Variable variable, int position)
+    {
+        if (!usePositions.TryGetValue(variable, out var positions))
+        {
+            positions = [];
+            usePositions[variable] = positions;
+        }
+        if (positions.LastOrDefault(-1) != position) positions.Add(position);
     }
 
     static void MarkUsed(Dictionary<Variable, NextUse> table, List<Variable> uses, int position)

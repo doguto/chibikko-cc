@@ -120,6 +120,18 @@ public static class RegisterGroup
         };
     }
 
+    public static List<Register> AllocatableRegisters()
+    {
+        return new List<Register>()
+        {
+            Register.rbx,
+            Register.r12,
+            Register.r13,
+            Register.r14,
+            Register.r15,
+        };
+    }
+
     // https://gitlab.com/x86-psABIs/x86-64-ABI
     // If the class is INTEGER, the next available register of the sequence %rdi, %rsi, %rdx, %rcx, %r8 and %r9 is used19.
     public static List<Register> IntArgumentRegisters()
