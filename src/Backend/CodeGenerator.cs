@@ -6,11 +6,11 @@ using Chibikko.Backend.Type;
 
 namespace Chibikko.Backend;
 
-public sealed partial class CodeGenerator
+public sealed class CodeGenerator
 {
     FunctionCodegenContext context = null!;
     StringBuilder code = new();
-    InstructionAllocation current = null!;
+    OperandEmitter operands = null!;
 
     public string Emit(Ir ir)
     {
@@ -19,6 +19,7 @@ public sealed partial class CodeGenerator
         foreach (var function in ir.Functions)
         {
             context = new(function, frames.Get(function), frames.AllocationOf(function), frames);
+            operands = new(code, context);
             EmitFunction();
         }
 
@@ -52,7 +53,7 @@ public sealed partial class CodeGenerator
 
         foreach (var quadruple in block.Instructions)
         {
-            current = context.Allocation.Of(quadruple);
+            context.Current = context.Allocation.Of(quadruple);
             EmitSpills();
 
             switch (quadruple.OperationType)
@@ -111,7 +112,7 @@ public sealed partial class CodeGenerator
 
         if (block.Terminator is not null)
         {
-            current = context.Allocation.OfTerminator(block);
+            context.Current = context.Allocation.OfTerminator(block);
             EmitSpills();
         }
 
@@ -137,19 +138,19 @@ public sealed partial class CodeGenerator
     void GenerateAssign(Quadruple quadruple)
     {
         var destination = (quadruple.Destination as Variable)!;
-        if (RegisterOf(destination) is { } target)
+        if (operands.RegisterOf(destination) is { } target)
         {
-            LoadOperand(quadruple.Source1!, target);
+            operands.Load(quadruple.Source1!, target);
             return;
         }
-        if (quadruple.Source1 is Variable source && RegisterOf(source) is { } sourceRegister)
+        if (quadruple.Source1 is Variable source && operands.RegisterOf(source) is { } sourceRegister)
         {
-            StoreOperand(sourceRegister, destination);
+            operands.Store(sourceRegister, destination);
             return;
         }
 
-        LoadOperand(quadruple.Source1!, Register.rax);
-        StoreOperand(Register.rax, destination);
+        operands.Load(quadruple.Source1!, Register.rax);
+        operands.Store(Register.rax, destination);
     }
 
     void GenerateAdd(Quadruple quadruple) => GenerateArithmetic(quadruple, "addq");
@@ -163,37 +164,37 @@ public sealed partial class CodeGenerator
     void GenerateArithmetic(Quadruple quadruple, string instruction)
     {
         var destination = (quadruple.Destination as Variable)!;
-        var target = RegisterOf(destination) is { } register && !IsIn(quadruple.Source2!, register)
+        var target = operands.RegisterOf(destination) is { } register && !operands.IsIn(quadruple.Source2!, register)
             ? register
             : Register.rax;
 
-        LoadOperand(quadruple.Source1!, target);
-        code.AppendNewIndentedLine($"{instruction} {SourceOperand(quadruple.Source2!)}, {target.ToName()}");
-        if (target == Register.rax) StoreOperand(Register.rax, destination);
+        operands.Load(quadruple.Source1!, target);
+        code.AppendNewIndentedLine($"{instruction} {operands.SourceOperand(quadruple.Source2!)}, {target.ToName()}");
+        if (target == Register.rax) operands.Store(Register.rax, destination);
     }
 
     // Source1 を rax にロードし、cqto で rdx:rax に符号拡張してから idivq する
     // 商 (rax) を Destination に書き戻す
     void GenerateDivide(Quadruple quadruple)
     {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        var divisor = quadruple.Source2 is Variable variable && RegisterOf(variable) is { } register
+        operands.Load(quadruple.Source1!, Register.rax);
+        var divisor = quadruple.Source2 is Variable variable && operands.RegisterOf(variable) is { } register
             ? register
             : Register.rcx;
-        if (divisor == Register.rcx) LoadOperand(quadruple.Source2!, Register.rcx);
+        if (divisor == Register.rcx) operands.Load(quadruple.Source2!, Register.rcx);
         code.AppendNewIndentedLine("cqto"); // rdx:rax に拡張し、溢れを防ぐ
         code.AppendNewIndentedLine($"idivq {divisor.ToName()}"); // rax に商, rdx に余りが格納される
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
+        operands.Store(Register.rax, (quadruple.Destination as Variable)!);
     }
 
     void GenerateNegate(Quadruple quadruple)
     {
         var destination = (quadruple.Destination as Variable)!;
-        var target = RegisterOf(destination) ?? Register.rax;
+        var target = operands.RegisterOf(destination) ?? Register.rax;
 
-        LoadOperand(quadruple.Source1!, target);
+        operands.Load(quadruple.Source1!, target);
         code.AppendNewIndentedLine($"negq {target.ToName()}");
-        if (target == Register.rax) StoreOperand(Register.rax, destination);
+        if (target == Register.rax) operands.Store(Register.rax, destination);
     }
 
     void GenerateEqual(Quadruple quadruple) => GenerateComparison(quadruple, "sete");
@@ -212,17 +213,17 @@ public sealed partial class CodeGenerator
     void GenerateComparison(Quadruple quadruple, string instruction)
     {
         var destination = (quadruple.Destination as Variable)!;
-        var left = quadruple.Source1 is Variable variable && RegisterOf(variable) is { } register
+        var left = quadruple.Source1 is Variable variable && operands.RegisterOf(variable) is { } register
             ? register
             : Register.rax;
-        if (left == Register.rax) LoadOperand(quadruple.Source1!, Register.rax);
+        if (left == Register.rax) operands.Load(quadruple.Source1!, Register.rax);
 
-        code.AppendNewIndentedLine($"cmpq {SourceOperand(quadruple.Source2!)}, {left.ToName()}");
+        code.AppendNewIndentedLine($"cmpq {operands.SourceOperand(quadruple.Source2!)}, {left.ToName()}");
         code.AppendNewIndentedLine($"{instruction} {Register.al.ToName()}");
 
-        var target = RegisterOf(destination) ?? Register.rax;
+        var target = operands.RegisterOf(destination) ?? Register.rax;
         code.AppendNewIndentedLine($"movzbq {Register.al.ToName()}, {target.ToName()}");
-        if (target == Register.rax) StoreOperand(Register.rax, destination);
+        if (target == Register.rax) operands.Store(Register.rax, destination);
     }
 
     // 次のブロックへのジャンプは省略する
@@ -235,10 +236,10 @@ public sealed partial class CodeGenerator
     // 0 なら je で Else へ、そうでなければ Then へ進む。Then が次のブロックなら jmp を省略する
     void GenerateBranch(Branch branch, BasicBlock? next)
     {
-        var condition = branch.Condition is Variable variable && RegisterOf(variable) is { } register
+        var condition = branch.Condition is Variable variable && operands.RegisterOf(variable) is { } register
             ? register
             : Register.rax;
-        if (condition == Register.rax) LoadOperand(branch.Condition, Register.rax);
+        if (condition == Register.rax) operands.Load(branch.Condition, Register.rax);
 
         code.AppendNewIndentedLine($"cmpq $0, {condition.ToName()}");
         code.AppendNewIndentedLine($"je {BlockLabel(branch.Else)}");
@@ -248,7 +249,7 @@ public sealed partial class CodeGenerator
     // 引数をキューに積み、直後の Call でまとめて配置する
     void GenerateParam(Quadruple quadruple)
     {
-        context.PendingArguments.Enqueue((quadruple.Source1!, current));
+        context.PendingArguments.Enqueue((quadruple.Source1!, context.Current));
     }
 
     // System V ABI に従い、先頭 6 個をレジスタ、残りを逆順に push して call する
@@ -267,14 +268,14 @@ public sealed partial class CodeGenerator
         // Register に置けない引数は Stack に push する
         foreach (var argument in Enumerable.Reverse(stackArguments))
         {
-            LoadOperand(argument.Operand, Register.rax, argument.Allocation);
+            operands.Load(argument.Operand, Register.rax, argument.Allocation);
             code.AppendNewIndentedLine($"pushq {Register.rax.ToName()}");
         }
 
         // Register への配置
         for (var i = 0; i < Math.Min(arguments.Count, RegisterGroup.IntArgumentRegisters().Count); i++)
         {
-            LoadOperand(arguments[i].Operand, RegisterGroup.IntArgumentRegisters()[i], arguments[i].Allocation);
+            operands.Load(arguments[i].Operand, RegisterGroup.IntArgumentRegisters()[i], arguments[i].Allocation);
         }
 
         code.AppendNewIndentedLine($"movl $0, {Register.eax.ToName()}");
@@ -283,12 +284,12 @@ public sealed partial class CodeGenerator
         var cleanup = stackArguments.Count * 8 + padding;
         if (cleanup != 0) code.AppendNewIndentedLine($"addq ${cleanup}, {Register.rsp.ToName()}");
 
-        if (quadruple.Destination is Variable destination) StoreOperand(Register.rax, destination);
+        if (quadruple.Destination is Variable destination) operands.Store(Register.rax, destination);
     }
 
     void GenerateReturn(Return @return)
     {
-        if (@return.Value is { } value) LoadOperand(value, Register.rax);
+        if (@return.Value is { } value) operands.Load(value, Register.rax);
         EmitRestoreRegisters();
         code.AppendNewIndentedLine($"movq {Register.rbp.ToName()}, {Register.rsp.ToName()}");
         code.AppendNewIndentedLine($"popq {Register.rbp.ToName()}");
@@ -316,7 +317,7 @@ public sealed partial class CodeGenerator
 
     void EmitSpills()
     {
-        foreach (var spill in current.SpillsBefore)
+        foreach (var spill in context.Current.SpillsBefore)
         {
             var suffix = spill.Temp.Type.GetAssemblySuffix();
             var sized = spill.From.ToSized(spill.Temp.Type.GetWidth());
@@ -332,7 +333,7 @@ public sealed partial class CodeGenerator
         var parameters = context.Function.Parameters;
         for (var i = 0; i < Math.Min(parameters.Count, registers.Count); i++)
         {
-            StoreOperand(registers[i], parameters[i]);
+            operands.Store(registers[i], parameters[i]);
         }
     }
 }

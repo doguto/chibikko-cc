@@ -14,6 +14,7 @@ sealed class FunctionCodegenContext(
     public StackFrame Frame { get; } = frame;
     public AllocationResult Allocation { get; } = allocation;
     public StackFrameTable Frames { get; } = frames;
+    public InstructionAllocation Current { get; set; } = null!;
     public Queue<(Operand Operand, InstructionAllocation Allocation)> PendingArguments { get; } = new();
 
     public int OffsetOf(Variable variable) => Frame.OffsetOf(variable);

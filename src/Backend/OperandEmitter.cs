@@ -1,13 +1,14 @@
+using System.Text;
 using Chibikko.Backend.Type;
 using Chibikko.Common.Ir;
 using Chibikko.Common.Utility;
 
 namespace Chibikko.Backend;
 
-public sealed partial class CodeGenerator
+sealed class OperandEmitter(StringBuilder code, FunctionCodegenContext context)
 {
     // 定数は即値、変数は rbp 相対で読み込む。4 byte 以下は符号拡張して 64bit レジスタに載せる
-    void LoadOperand(Operand operand, Register register, InstructionAllocation? allocation = null)
+    public void Load(Operand operand, Register register, InstructionAllocation? allocation = null)
     {
         if (operand is Variable temp && RegisterOf(temp, allocation) is { } source)
         {
@@ -32,7 +33,7 @@ public sealed partial class CodeGenerator
     }
 
     // レジスタ上の Temp には 64bit のまま転送し、それ以外は変数の幅に合わせて rbp 相対で書き込む
-    void StoreOperand(Register source, Variable destination)
+    public void Store(Register source, Variable destination)
     {
         var suffix = destination.Type.GetAssemblySuffix();
         var sized = source.ToSized(destination.Type.GetWidth());
@@ -44,15 +45,15 @@ public sealed partial class CodeGenerator
         code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, {context.OffsetOf(destination)}({Register.rbp.ToName()})");
     }
 
-    Register? RegisterOf(Variable variable, InstructionAllocation? allocation = null) =>
-        variable.IsTemporary && (allocation ?? current).Of(variable) is InRegister { Register: var register }
+    public Register? RegisterOf(Variable variable, InstructionAllocation? allocation = null) =>
+        variable.IsTemporary && (allocation ?? context.Current).Of(variable) is InRegister { Register: var register }
             ? register
             : null;
 
-    bool IsIn(Operand operand, Register register) =>
+    public bool IsIn(Operand operand, Register register) =>
         operand is Variable variable && RegisterOf(variable) == register;
 
-    string SourceOperand(Operand operand)
+    public string SourceOperand(Operand operand)
     {
         switch (operand)
         {
@@ -63,7 +64,7 @@ public sealed partial class CodeGenerator
             case Variable { Type: IrType.I64 } variable:
                 return $"{context.OffsetOf(variable)}({Register.rbp.ToName()})";
             default:
-                LoadOperand(operand, Register.rcx);
+                Load(operand, Register.rcx);
                 return Register.rcx.ToName();
         }
     }
