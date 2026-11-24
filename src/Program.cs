@@ -17,9 +17,12 @@ var source = File.ReadAllText(path);
 
 try
 {
+    var optimizationPipeline = new OptimizationPipeline();
+    optimizationPipeline.Add(new CommonSubexpressionElimination());
+
     var compiler = new Compiler(
         new FrontendPipeline(),
-        new OptimizationPipeline(),
+        optimizationPipeline,
         new BackendPipeline()
     );
 
