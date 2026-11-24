@@ -27,6 +27,7 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
             {
                 var quadruple = block.Instructions[position];
                 instructions[quadruple] = AllocateInstruction(
+                    quadruple.Source1,
                     quadruple.Uses(),
                     quadruple.Defs(),
                     nextUses.Of(quadruple),
@@ -38,6 +39,7 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
             if (block.Terminator is { } terminator)
             {
                 terminators[block] = AllocateInstruction(
+                    null,
                     terminator.Uses(),
                     [],
                     nextUses.OfTerminator(),
@@ -56,6 +58,7 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
     }
 
     InstructionAllocation AllocateInstruction(
+        Operand? source1,
         IEnumerable<Variable> uses,
         IEnumerable<Variable> defs,
         NextUseInfo nextUse,
@@ -74,6 +77,12 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
                 : throw new InvalidOperationException("temporary variable is used before definition");
         }
 
+        var preferred = source1 is Variable { IsTemporary: true } first
+            && !nextUse.Of(first).IsLive
+            && locationTable[first] is InRegister { Register: var firstRegister }
+                ? firstRegister
+                : (Register?)null;
+
         foreach (var use in temporaryUses)
         {
             if (!nextUse.Of(use).IsLive) Free(use);
@@ -83,7 +92,7 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
         {
             if (!locationTable.ContainsKey(def))
             {
-                locationTable[def] = Assign(def, nextUse.Of(def), nextUses, position, spills);
+                locationTable[def] = Assign(def, nextUse.Of(def), nextUses, position, preferred, spills);
             }
             operands[def] = locationTable[def];
             if (!nextUse.Of(def).IsLive) Free(def);
@@ -92,8 +101,17 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
         return new InstructionAllocation(operands, spills);
     }
 
-    Location Assign(Variable temp, NextUse nextUse, BlockNextUse nextUses, int position, List<Spill> spills)
+    Location Assign(
+        Variable temp,
+        NextUse nextUse,
+        BlockNextUse nextUses,
+        int position,
+        Register? preferred,
+        List<Spill> spills
+    )
     {
+        if (preferred is { } reusable && !registerTable.ContainsKey(reusable)) return Occupy(reusable, temp);
+
         var free = usableRegisters.Where(r => !registerTable.ContainsKey(r)).Cast<Register?>().FirstOrDefault();
         if (free is { } register) return Occupy(register, temp);
 

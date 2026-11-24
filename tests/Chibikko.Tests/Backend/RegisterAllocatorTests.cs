@@ -48,6 +48,22 @@ public class RegisterAllocatorTests
     }
 
     [Fact]
+    public void Destination_PrefersSource1Register_WhenSource1Dies()
+    {
+        var function = Main("int a = 1; int b = 2; int c = 3; int x = (a + b) + (a - b) * c; return x;");
+        var result = new RegisterAllocator([Register.rbx, Register.r12, Register.r13]).Allocate(function);
+
+        var entry = function.Blocks[0];
+        var subtract = Find(entry, OperationType.Subtract);
+        var multiply = Find(entry, OperationType.Multiply);
+        var t2 = (Variable)subtract.Destination!;
+        var t3 = (Variable)multiply.Destination!;
+
+        Assert.Equal(new InRegister(Register.r12), result.Of(subtract).Of(t2));
+        Assert.Equal(new InRegister(Register.r12), result.Of(multiply).Of(t3));
+    }
+
+    [Fact]
     public void Farthest_IsSpilled_WhenNoRegisterIsFree()
     {
         var function = Main("int a = 1; int b = 2; int x = (a + b) * (a - b); return x;");
