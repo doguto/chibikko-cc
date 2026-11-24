@@ -3,12 +3,13 @@ using Chibikko.Common.Ir;
 
 namespace Chibikko.Backend;
 
-sealed class FunctionCodegenContext(IrFunction function, StackFrame frame, StackFrameTable frames)
+sealed class FunctionCodegenContext(IrFunction function, StackFrame frame, AllocationResult allocation, StackFrameTable frames)
 {
     public IrFunction Function { get; } = function;
     public StackFrame Frame { get; } = frame;
+    public AllocationResult Allocation { get; } = allocation;
     public StackFrameTable Frames { get; } = frames;
-    public Queue<Operand> PendingArguments { get; } = new();
+    public Queue<(Operand Operand, InstructionAllocation Allocation)> PendingArguments { get; } = new();
 
     public int OffsetOf(Variable variable) => Frame.OffsetOf(variable);
 

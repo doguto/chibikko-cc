@@ -10,6 +10,7 @@ public sealed class CodeGenerator
 {
     FunctionCodegenContext context = null!;
     StringBuilder code = new();
+    InstructionAllocation current = null!;
 
     public string Emit(Ir ir)
     {
@@ -17,7 +18,7 @@ public sealed class CodeGenerator
 
         foreach (var function in ir.Functions)
         {
-            context = new(function, frames.Get(function), frames);
+            context = new(function, frames.Get(function), frames.AllocationOf(function), frames);
             EmitFunction();
         }
 
@@ -34,6 +35,7 @@ public sealed class CodeGenerator
         code.AppendNewIndentedLine($"pushq {Register.rbp.ToName()}");
         code.AppendNewIndentedLine($"movq {Register.rsp.ToName()}, {Register.rbp.ToName()}");
         if (frameSize != 0) code.AppendNewIndentedLine($"subq ${frameSize}, {Register.rsp.ToName()}");
+        EmitSaveRegisters();
         EmitParameterSpill();
 
         var blocks = context.Function.Blocks;
@@ -50,6 +52,9 @@ public sealed class CodeGenerator
 
         foreach (var quadruple in block.Instructions)
         {
+            current = context.Allocation.Of(quadruple);
+            EmitSpills();
+
             switch (quadruple.OperationType)
             {
                 case OperationType.Assign:
@@ -102,6 +107,12 @@ public sealed class CodeGenerator
                 default:
                     throw new UnreachableException($"Unknown operation type: {quadruple.OperationType}");
             }
+        }
+
+        if (block.Terminator is not null)
+        {
+            current = context.Allocation.OfTerminator(block);
+            EmitSpills();
         }
 
         switch (block.Terminator)
@@ -261,7 +272,7 @@ public sealed class CodeGenerator
     // 引数をキューに積み、直後の Call でまとめて配置する
     void GenerateParam(Quadruple quadruple)
     {
-        context.PendingArguments.Enqueue(quadruple.Source1!);
+        context.PendingArguments.Enqueue((quadruple.Source1!, current));
     }
 
     // System V ABI に従い、先頭 6 個をレジスタ、残りを逆順に push して call する
@@ -270,7 +281,7 @@ public sealed class CodeGenerator
     {
         IrFunction irFunction = (quadruple.Source1 as FunctionRef)!.Function;
 
-        List<Operand> arguments = [];
+        List<(Operand Operand, InstructionAllocation Allocation)> arguments = [];
         while (context.PendingArguments.TryDequeue(out var argument)) arguments.Add(argument);
 
         var stackArguments = arguments.Skip(RegisterGroup.IntArgumentRegisters().Count).ToList();
@@ -280,14 +291,14 @@ public sealed class CodeGenerator
         // Register に置けない引数は Stack に push する
         foreach (var argument in Enumerable.Reverse(stackArguments))
         {
-            LoadOperand(argument, Register.rax);
+            LoadOperand(argument.Operand, Register.rax, argument.Allocation);
             code.AppendNewIndentedLine($"pushq {Register.rax.ToName()}");
         }
 
         // Register への配置
         for (var i = 0; i < Math.Min(arguments.Count, RegisterGroup.IntArgumentRegisters().Count); i++)
         {
-            LoadOperand(arguments[i], RegisterGroup.IntArgumentRegisters()[i]);
+            LoadOperand(arguments[i].Operand, RegisterGroup.IntArgumentRegisters()[i], arguments[i].Allocation);
         }
 
         code.AppendNewIndentedLine($"movl $0, {Register.eax.ToName()}");
@@ -302,11 +313,40 @@ public sealed class CodeGenerator
     void GenerateReturn(Return @return)
     {
         if (@return.Value is { } value) LoadOperand(value, Register.rax);
+        EmitRestoreRegisters();
         code.AppendNewIndentedLine($"movq {Register.rbp.ToName()}, {Register.rsp.ToName()}");
         code.AppendNewIndentedLine($"popq {Register.rbp.ToName()}");
         code.AppendNewIndentedLine("ret");
     }
 
+
+    void EmitSaveRegisters()
+    {
+        var saved = context.Frame.SavedRegisters;
+        for (var i = 0; i < saved.Count; i++)
+        {
+            code.AppendNewIndentedLine($"movq {saved[i].ToName()}, {context.Frame.SavedRegisterOffset(i)}({Register.rbp.ToName()})");
+        }
+    }
+
+    void EmitRestoreRegisters()
+    {
+        var saved = context.Frame.SavedRegisters;
+        for (var i = 0; i < saved.Count; i++)
+        {
+            code.AppendNewIndentedLine($"movq {context.Frame.SavedRegisterOffset(i)}({Register.rbp.ToName()}), {saved[i].ToName()}");
+        }
+    }
+
+    void EmitSpills()
+    {
+        foreach (var spill in current.SpillsBefore)
+        {
+            var suffix = spill.Temp.Type.GetAssemblySuffix();
+            var sized = spill.From.ToSized(spill.Temp.Type.GetWidth());
+            code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, {context.OffsetOf(spill.Temp)}({Register.rbp.ToName()})");
+        }
+    }
 
     // 引数レジスタを自フレームの Parameter スロットへ書き込む
     // 7 個目以降の引数は呼び出し元フレーム上 (16(%rbp) 以降) をそのまま参照する
@@ -324,8 +364,17 @@ public sealed class CodeGenerator
     // --- Helper
 
     // 定数は即値、変数は rbp 相対で読み込む。4 byte 以下は符号拡張して 64bit レジスタに載せる
-    void LoadOperand(Operand operand, Register register)
+    void LoadOperand(Operand operand, Register register, InstructionAllocation? allocation = null)
     {
+        if (operand is Variable { IsTemporary: true } temp && (allocation ?? current).Of(temp) is InRegister { Register: var source })
+        {
+            var tempSuffix = temp.Type.GetAssemblySuffix();
+            var sizedSource = source.ToSized(temp.Type.GetWidth());
+            var move = tempSuffix == 'q' ? "movq" : $"movs{tempSuffix}q";
+            code.AppendNewIndentedLine($"{move} {sizedSource.ToName()}, {register.ToName()}");
+            return;
+        }
+
         switch (operand)
         {
             case IntegerConstant constant:
@@ -347,6 +396,11 @@ public sealed class CodeGenerator
     {
         var suffix = destination.Type.GetAssemblySuffix();
         var sized = source.ToSized(destination.Type.GetWidth());
+        if (destination.IsTemporary && current.Of(destination) is InRegister { Register: var target })
+        {
+            code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, {target.ToSized(destination.Type.GetWidth()).ToName()}");
+            return;
+        }
         code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, {context.OffsetOf(destination)}({Register.rbp.ToName()})");
     }
 }
