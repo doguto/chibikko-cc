@@ -6,12 +6,15 @@ namespace Chibikko.Tests.Optimizer;
 
 public class CommonSubexpressionEliminationTests
 {
-    static BasicBlock Optimize(string body)
+    static IrFunction Optimize(string source, string name)
     {
-        var ir = new FrontendPipeline().Run($"int f(int a, int b, int c, int d) {{ {body} }}");
+        var ir = new FrontendPipeline().Run(source);
         new CommonSubexpressionElimination().Run(ir);
-        return ir.Functions.Single(f => f.Name == "f").Blocks[0];
+        return ir.Functions.Single(f => f.Name == name);
     }
+
+    static BasicBlock Optimize(string body) =>
+        Optimize($"int f(int a, int b, int c, int d) {{ {body} }}", "f").Blocks[0];
 
     static int Count(BasicBlock block, OperationType operationType) =>
         block.Instructions.Count(q => q.OperationType == operationType);
@@ -65,9 +68,7 @@ public class CommonSubexpressionEliminationTests
     [Fact]
     public void CallResult_IsNotShared()
     {
-        var ir = new FrontendPipeline().Run("int g() { return 1; } int main() { int x = g(); int y = g(); return x + y; }");
-        new CommonSubexpressionElimination().Run(ir);
-        var block = ir.Functions.Single(f => f.Name == "main").Blocks[0];
+        var block = Optimize("int g() { return 1; } int main() { int x = g(); int y = g(); return x + y; }", "main").Blocks[0];
 
         Assert.Equal(2, Count(block, OperationType.Call));
     }
@@ -75,9 +76,7 @@ public class CommonSubexpressionEliminationTests
     [Fact]
     public void ExpressionOverCallResults_IsNotShared()
     {
-        var ir = new FrontendPipeline().Run("int g() { return 1; } int main() { int x = g() + 1; int y = g() + 1; return x + y; }");
-        new CommonSubexpressionElimination().Run(ir);
-        var block = ir.Functions.Single(f => f.Name == "main").Blocks[0];
+        var block = Optimize("int g() { return 1; } int main() { int x = g() + 1; int y = g() + 1; return x + y; }", "main").Blocks[0];
 
         Assert.Equal(3, Count(block, OperationType.Add));
     }
@@ -85,9 +84,7 @@ public class CommonSubexpressionEliminationTests
     [Fact]
     public void ExpressionAcrossBlocks_IsNotEliminated()
     {
-        var ir = new FrontendPipeline().Run("int f(int a, int b) { int x = a + b; if (x > 0) { a = 0; } return a + b; }");
-        new CommonSubexpressionElimination().Run(ir);
-        var function = ir.Functions.Single(f => f.Name == "f");
+        var function = Optimize("int f(int a, int b) { int x = a + b; if (x > 0) { a = 0; } return a + b; }", "f");
 
         Assert.Equal(2, function.Blocks.Sum(b => Count(b, OperationType.Add)));
     }
