@@ -366,7 +366,8 @@ public sealed class CodeGenerator
     // 定数は即値、変数は rbp 相対で読み込む。4 byte 以下は符号拡張して 64bit レジスタに載せる
     void LoadOperand(Operand operand, Register register, InstructionAllocation? allocation = null)
     {
-        if (operand is Variable { IsTemporary: true } temp && (allocation ?? current).Of(temp) is InRegister { Register: var source })
+        if (operand is Variable { IsTemporary: true } temp
+            && (allocation ?? current).Of(temp) is InRegister { Register: var source })
         {
             var tempSuffix = temp.Type.GetAssemblySuffix();
             var sizedSource = source.ToSized(temp.Type.GetWidth());

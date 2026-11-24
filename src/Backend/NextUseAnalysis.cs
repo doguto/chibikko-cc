@@ -15,17 +15,21 @@ public sealed class NextUseInfo(IReadOnlyDictionary<Variable, NextUse> operands)
 public sealed class BlockNextUse(
     Dictionary<Quadruple, NextUseInfo> instructions,
     NextUseInfo? terminator,
-    Dictionary<Variable, List<int>> usePositions)
+    Dictionary<Variable, List<int>> usePositions
+)
 {
     public NextUseInfo Of(Quadruple quadruple) => instructions[quadruple];
 
     public NextUseInfo OfTerminator() =>
         terminator ?? throw new InvalidOperationException("block has no terminator");
 
-    public int? NextUseAfter(Variable variable, int position) =>
-        usePositions.TryGetValue(variable, out var positions) && positions.FirstOrDefault(p => p > position, -1) is var next and >= 0
-            ? next
-            : null;
+    public int? NextUseAfter(Variable variable, int position)
+    {
+        if (!usePositions.TryGetValue(variable, out var positions)) return null;
+
+        var next = positions.FirstOrDefault(p => p > position, -1);
+        return next >= 0 ? next : null;
+    }
 }
 
 // TODO: 現状はレジスタ割り当て専用のため Backend に置いている
@@ -72,7 +76,10 @@ public static class NextUseAnalysis
         {
             foreach (var use in block.Instructions[i].Uses()) AddUsePosition(usePositions, use, i);
         }
-        foreach (var use in block.Terminator?.Uses() ?? []) AddUsePosition(usePositions, use, block.Instructions.Count);
+        foreach (var use in block.Terminator?.Uses() ?? [])
+        {
+            AddUsePosition(usePositions, use, block.Instructions.Count);
+        }
 
         return new BlockNextUse(instructions, terminator, usePositions);
     }

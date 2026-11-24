@@ -27,13 +27,23 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
             {
                 var quadruple = block.Instructions[position];
                 instructions[quadruple] = AllocateInstruction(
-                    quadruple.Uses(), quadruple.Defs(), nextUses.Of(quadruple), nextUses, position);
+                    quadruple.Uses(),
+                    quadruple.Defs(),
+                    nextUses.Of(quadruple),
+                    nextUses,
+                    position
+                );
             }
 
             if (block.Terminator is { } terminator)
             {
                 terminators[block] = AllocateInstruction(
-                    terminator.Uses(), [], nextUses.OfTerminator(), nextUses, block.Instructions.Count);
+                    terminator.Uses(),
+                    [],
+                    nextUses.OfTerminator(),
+                    nextUses,
+                    block.Instructions.Count
+                );
             }
 
             if (registerTable.Count != 0)
@@ -71,7 +81,10 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
 
         foreach (var def in defs.Where(x => x.IsTemporary))
         {
-            if (!locationTable.ContainsKey(def)) locationTable[def] = Assign(def, nextUse.Of(def), nextUses, position, spills);
+            if (!locationTable.ContainsKey(def))
+            {
+                locationTable[def] = Assign(def, nextUse.Of(def), nextUses, position, spills);
+            }
             operands[def] = locationTable[def];
             if (!nextUse.Of(def).IsLive) Free(def);
         }
@@ -85,7 +98,11 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
         if (free is { } register) return Occupy(register, temp);
 
         var victim = registerTable
-            .Select(x => (Register: x.Key, Temp: x.Value, Position: nextUses.NextUseAfter(x.Value, position) ?? int.MaxValue))
+            .Select(x => (
+                Register: x.Key,
+                Temp: x.Value,
+                Position: nextUses.NextUseAfter(x.Value, position) ?? int.MaxValue
+            ))
             .MaxBy(x => x.Position);
 
         if ((nextUse.Position ?? int.MaxValue) >= victim.Position)
@@ -110,9 +127,9 @@ public sealed class RegisterAllocator(IReadOnlyList<Register> usableRegisters)
 
     void Free(Variable temp)
     {
-        if (locationTable.GetValueOrDefault(temp) is InRegister { Register: var register } && registerTable.GetValueOrDefault(register) == temp)
-        {
-            registerTable.Remove(register);
-        }
+        if (locationTable.GetValueOrDefault(temp) is not InRegister { Register: var register }) return;
+        if (registerTable.GetValueOrDefault(register) != temp) return;
+
+        registerTable.Remove(register);
     }
 }

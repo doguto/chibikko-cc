@@ -10,7 +10,10 @@ public sealed record OnStack : Location;
 
 public sealed record Spill(Variable Temp, Register From);
 
-public sealed class InstructionAllocation(IReadOnlyDictionary<Variable, Location> operands, IReadOnlyList<Spill> spillsBefore)
+public sealed class InstructionAllocation(
+    IReadOnlyDictionary<Variable, Location> operands,
+    IReadOnlyList<Spill> spillsBefore
+)
 {
     public IReadOnlyList<Spill> SpillsBefore { get; } = spillsBefore;
 
@@ -24,7 +27,8 @@ public sealed class AllocationResult(
     Dictionary<Quadruple, InstructionAllocation> instructions,
     Dictionary<BasicBlock, InstructionAllocation> terminators,
     IReadOnlySet<Register> usedRegisters,
-    IReadOnlySet<Variable> spilledTemps)
+    IReadOnlySet<Variable> spilledTemps
+)
 {
     public IReadOnlySet<Register> UsedRegisters { get; } = usedRegisters;
     public IReadOnlySet<Variable> SpilledTemps { get; } = spilledTemps;
