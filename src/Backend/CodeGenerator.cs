@@ -10,6 +10,7 @@ public sealed class CodeGenerator
 {
     FunctionCodegenContext context = null!;
     StringBuilder code = new();
+    OperandEmitter operands = null!;
 
     public string Emit(Ir ir)
     {
@@ -17,7 +18,8 @@ public sealed class CodeGenerator
 
         foreach (var function in ir.Functions)
         {
-            context = new(function, frames.Get(function), frames);
+            context = new(function, frames.Get(function), frames.AllocationOf(function), frames);
+            operands = new(code, context);
             EmitFunction();
         }
 
@@ -34,6 +36,7 @@ public sealed class CodeGenerator
         code.AppendNewIndentedLine($"pushq {Register.rbp.ToName()}");
         code.AppendNewIndentedLine($"movq {Register.rsp.ToName()}, {Register.rbp.ToName()}");
         if (frameSize != 0) code.AppendNewIndentedLine($"subq ${frameSize}, {Register.rsp.ToName()}");
+        EmitSaveRegisters();
         EmitParameterSpill();
 
         var blocks = context.Function.Blocks;
@@ -50,6 +53,9 @@ public sealed class CodeGenerator
 
         foreach (var quadruple in block.Instructions)
         {
+            context.Current = context.Allocation.Of(quadruple);
+            EmitSpills();
+
             switch (quadruple.OperationType)
             {
                 case OperationType.Assign:
@@ -104,6 +110,12 @@ public sealed class CodeGenerator
             }
         }
 
+        if (block.Terminator is not null)
+        {
+            context.Current = context.Allocation.OfTerminator(block);
+            EmitSpills();
+        }
+
         switch (block.Terminator)
         {
             case Jump jump:
@@ -122,124 +134,96 @@ public sealed class CodeGenerator
 
     string BlockLabel(BasicBlock block) => $".L{context.Function.Name}.{context.Function.Blocks.IndexOf(block)}";
 
-    // Source1 を rax にロードし、Destination の幅で書き戻す
+    // Destination か Source1 がレジスタ上の Temp ならレジスタ間で直接転送し、それ以外は rax を経由する
     void GenerateAssign(Quadruple quadruple)
     {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
+        var destination = (quadruple.Destination as Variable)!;
+        if (operands.RegisterOf(destination) is { } target)
+        {
+            operands.Load(quadruple.Source1!, target);
+            return;
+        }
+        if (quadruple.Source1 is Variable source && operands.RegisterOf(source) is { } sourceRegister)
+        {
+            operands.Store(sourceRegister, destination);
+            return;
+        }
+
+        operands.Load(quadruple.Source1!, Register.rax);
+        operands.Store(Register.rax, destination);
     }
 
-    // Source1 を rax、Source2 を rcx にロードし addq %rcx, %rax の結果を Destination に書き戻す
-    void GenerateAdd(Quadruple quadruple)
+    void GenerateAdd(Quadruple quadruple) => GenerateArithmetic(quadruple, "addq");
+
+    void GenerateSubtract(Quadruple quadruple) => GenerateArithmetic(quadruple, "subq");
+
+    void GenerateMultiply(Quadruple quadruple) => GenerateArithmetic(quadruple, "imulq");
+
+    // Destination に割り当てたレジスタ (無ければ rax) を演算先とし、Source2 は即値・レジスタのまま使う
+    // Source2 が演算先と同じレジスタにある場合は rax で演算する
+    void GenerateArithmetic(Quadruple quadruple, string instruction)
     {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine($"addq {Register.rcx.ToName()}, {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
+        var destination = (quadruple.Destination as Variable)!;
+        var target = operands.RegisterOf(destination) is { } register && !operands.IsIn(quadruple.Source2!, register)
+            ? register
+            : Register.rax;
+
+        operands.Load(quadruple.Source1!, target);
+        code.AppendNewIndentedLine($"{instruction} {operands.SourceOperand(quadruple.Source2!)}, {target.ToName()}");
+        if (target == Register.rax) operands.Store(Register.rax, destination);
     }
 
-    // Add と同様に subq %rcx, %rax
-    void GenerateSubtract(Quadruple quadruple)
-    {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine($"subq {Register.rcx.ToName()}, {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
-    }
-
-    // Add と同様に imulq %rcx, %rax
-    void GenerateMultiply(Quadruple quadruple)
-    {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine($"imulq {Register.rcx.ToName()}, {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
-    }
-
-    // Source1 を rax、Source2 を rcx にロードし、cqto で rdx:rax に符号拡張してから idivq %rcx
+    // Source1 を rax にロードし、cqto で rdx:rax に符号拡張してから idivq する
     // 商 (rax) を Destination に書き戻す
     void GenerateDivide(Quadruple quadruple)
     {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
+        operands.Load(quadruple.Source1!, Register.rax);
+        var divisor = quadruple.Source2 is Variable variable && operands.RegisterOf(variable) is { } register
+            ? register
+            : Register.rcx;
+        if (divisor == Register.rcx) operands.Load(quadruple.Source2!, Register.rcx);
         code.AppendNewIndentedLine("cqto"); // rdx:rax に拡張し、溢れを防ぐ
-        code.AppendNewIndentedLine($"idivq {Register.rcx.ToName()}"); // rax に商, rdx に余りが格納される
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
+        code.AppendNewIndentedLine($"idivq {divisor.ToName()}"); // rax に商, rdx に余りが格納される
+        operands.Store(Register.rax, (quadruple.Destination as Variable)!);
     }
 
-    // Source1 を rax にロードし negq %rax の結果を Destination に書き戻す
     void GenerateNegate(Quadruple quadruple)
     {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        code.AppendNewIndentedLine($"negq {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
+        var destination = (quadruple.Destination as Variable)!;
+        var target = operands.RegisterOf(destination) ?? Register.rax;
+
+        operands.Load(quadruple.Source1!, target);
+        code.AppendNewIndentedLine($"negq {target.ToName()}");
+        if (target == Register.rax) operands.Store(Register.rax, destination);
     }
 
-    // Source1 を rax、Source2 を rcx にロードし cmpq %rcx, %rax
-    // sete %al → movzbq %al, %rax で 0/1 にして Destination に書き戻す
-    void GenerateEqual(Quadruple quadruple)
-    {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine($"cmpq {Register.rcx.ToName()}, {Register.rax.ToName()}");
-        code.AppendNewIndentedLine($"sete {Register.al.ToName()}");
-        code.AppendNewIndentedLine($"movzbq {Register.al.ToName()}, {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
-    }
+    void GenerateEqual(Quadruple quadruple) => GenerateComparison(quadruple, "sete");
 
-    // Equal と同様に setne
-    void GenerateNotEqual(Quadruple quadruple)
-    {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine($"cmpq {Register.rcx.ToName()}, {Register.rax.ToName()}");
-        code.AppendNewIndentedLine($"setne {Register.al.ToName()}");
-        code.AppendNewIndentedLine($"movzbq {Register.al.ToName()}, {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
-    }
+    void GenerateNotEqual(Quadruple quadruple) => GenerateComparison(quadruple, "setne");
 
-    // Equal と同様に setl
-    void GenerateLessThan(Quadruple quadruple)
-    {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine($"cmpq {Register.rcx.ToName()}, {Register.rax.ToName()}");
-        code.AppendNewIndentedLine($"setl {Register.al.ToName()}");
-        code.AppendNewIndentedLine($"movzbq {Register.al.ToName()}, {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
-    }
+    void GenerateLessThan(Quadruple quadruple) => GenerateComparison(quadruple, "setl");
 
-    // Equal と同様に setle
-    void GenerateLessThanOrEqual(Quadruple quadruple)
-    {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine($"cmpq {Register.rcx.ToName()}, {Register.rax.ToName()}");
-        code.AppendNewIndentedLine($"setle {Register.al.ToName()}");
-        code.AppendNewIndentedLine($"movzbq {Register.al.ToName()}, {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
-    }
+    void GenerateLessThanOrEqual(Quadruple quadruple) => GenerateComparison(quadruple, "setle");
 
-    // Equal と同様に setg
-    void GenerateGreaterThan(Quadruple quadruple)
-    {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine($"cmpq {Register.rcx.ToName()}, {Register.rax.ToName()}");
-        code.AppendNewIndentedLine($"setg {Register.al.ToName()}");
-        code.AppendNewIndentedLine($"movzbq {Register.al.ToName()}, {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
-    }
+    void GenerateGreaterThan(Quadruple quadruple) => GenerateComparison(quadruple, "setg");
 
-    // Equal と同様に setge
-    void GenerateGreaterThanOrEqual(Quadruple quadruple)
+    void GenerateGreaterThanOrEqual(Quadruple quadruple) => GenerateComparison(quadruple, "setge");
+
+    // Source1 がレジスタ上にあればそのまま比較し、set* %al → movzbq で 0/1 を Destination に書き込む
+    void GenerateComparison(Quadruple quadruple, string instruction)
     {
-        LoadOperand(quadruple.Source1!, Register.rax);
-        LoadOperand(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine($"cmpq {Register.rcx.ToName()}, {Register.rax.ToName()}");
-        code.AppendNewIndentedLine($"setge {Register.al.ToName()}");
-        code.AppendNewIndentedLine($"movzbq {Register.al.ToName()}, {Register.rax.ToName()}");
-        StoreOperand(Register.rax, (quadruple.Destination as Variable)!);
+        var destination = (quadruple.Destination as Variable)!;
+        var left = quadruple.Source1 is Variable variable && operands.RegisterOf(variable) is { } register
+            ? register
+            : Register.rax;
+        if (left == Register.rax) operands.Load(quadruple.Source1!, Register.rax);
+
+        code.AppendNewIndentedLine($"cmpq {operands.SourceOperand(quadruple.Source2!)}, {left.ToName()}");
+        code.AppendNewIndentedLine($"{instruction} {Register.al.ToName()}");
+
+        var target = operands.RegisterOf(destination) ?? Register.rax;
+        code.AppendNewIndentedLine($"movzbq {Register.al.ToName()}, {target.ToName()}");
+        if (target == Register.rax) operands.Store(Register.rax, destination);
     }
 
     // 次のブロックへのジャンプは省略する
@@ -248,12 +232,16 @@ public sealed class CodeGenerator
         if (jump.Target != next) code.AppendNewIndentedLine($"jmp {BlockLabel(jump.Target)}");
     }
 
-    // 条件を rax にロードし cmpq $0, %rax
+    // 条件がレジスタ上になければ rax にロードし、cmpq $0 で比較する
     // 0 なら je で Else へ、そうでなければ Then へ進む。Then が次のブロックなら jmp を省略する
     void GenerateBranch(Branch branch, BasicBlock? next)
     {
-        LoadOperand(branch.Condition, Register.rax);
-        code.AppendNewIndentedLine($"cmpq $0, {Register.rax.ToName()}");
+        var condition = branch.Condition is Variable variable && operands.RegisterOf(variable) is { } register
+            ? register
+            : Register.rax;
+        if (condition == Register.rax) operands.Load(branch.Condition, Register.rax);
+
+        code.AppendNewIndentedLine($"cmpq $0, {condition.ToName()}");
         code.AppendNewIndentedLine($"je {BlockLabel(branch.Else)}");
         if (branch.Then != next) code.AppendNewIndentedLine($"jmp {BlockLabel(branch.Then)}");
     }
@@ -261,7 +249,7 @@ public sealed class CodeGenerator
     // 引数をキューに積み、直後の Call でまとめて配置する
     void GenerateParam(Quadruple quadruple)
     {
-        context.PendingArguments.Enqueue(quadruple.Source1!);
+        context.PendingArguments.Enqueue((quadruple.Source1!, context.Current));
     }
 
     // System V ABI に従い、先頭 6 個をレジスタ、残りを逆順に push して call する
@@ -270,7 +258,7 @@ public sealed class CodeGenerator
     {
         IrFunction irFunction = (quadruple.Source1 as FunctionRef)!.Function;
 
-        List<Operand> arguments = [];
+        List<(Operand Operand, InstructionAllocation Allocation)> arguments = [];
         while (context.PendingArguments.TryDequeue(out var argument)) arguments.Add(argument);
 
         var stackArguments = arguments.Skip(RegisterGroup.IntArgumentRegisters().Count).ToList();
@@ -280,14 +268,14 @@ public sealed class CodeGenerator
         // Register に置けない引数は Stack に push する
         foreach (var argument in Enumerable.Reverse(stackArguments))
         {
-            LoadOperand(argument, Register.rax);
+            operands.Load(argument.Operand, Register.rax, argument.Allocation);
             code.AppendNewIndentedLine($"pushq {Register.rax.ToName()}");
         }
 
         // Register への配置
         for (var i = 0; i < Math.Min(arguments.Count, RegisterGroup.IntArgumentRegisters().Count); i++)
         {
-            LoadOperand(arguments[i], RegisterGroup.IntArgumentRegisters()[i]);
+            operands.Load(arguments[i].Operand, RegisterGroup.IntArgumentRegisters()[i], arguments[i].Allocation);
         }
 
         code.AppendNewIndentedLine($"movl $0, {Register.eax.ToName()}");
@@ -296,17 +284,46 @@ public sealed class CodeGenerator
         var cleanup = stackArguments.Count * 8 + padding;
         if (cleanup != 0) code.AppendNewIndentedLine($"addq ${cleanup}, {Register.rsp.ToName()}");
 
-        if (quadruple.Destination is Variable destination) StoreOperand(Register.rax, destination);
+        if (quadruple.Destination is Variable destination) operands.Store(Register.rax, destination);
     }
 
     void GenerateReturn(Return @return)
     {
-        if (@return.Value is { } value) LoadOperand(value, Register.rax);
+        if (@return.Value is { } value) operands.Load(value, Register.rax);
+        EmitRestoreRegisters();
         code.AppendNewIndentedLine($"movq {Register.rbp.ToName()}, {Register.rsp.ToName()}");
         code.AppendNewIndentedLine($"popq {Register.rbp.ToName()}");
         code.AppendNewIndentedLine("ret");
     }
 
+
+    void EmitSaveRegisters()
+    {
+        var saved = context.Frame.SavedRegisters;
+        for (var i = 0; i < saved.Count; i++)
+        {
+            code.AppendNewIndentedLine($"movq {saved[i].ToName()}, {context.Frame.SavedRegisterOffset(i)}({Register.rbp.ToName()})");
+        }
+    }
+
+    void EmitRestoreRegisters()
+    {
+        var saved = context.Frame.SavedRegisters;
+        for (var i = 0; i < saved.Count; i++)
+        {
+            code.AppendNewIndentedLine($"movq {context.Frame.SavedRegisterOffset(i)}({Register.rbp.ToName()}), {saved[i].ToName()}");
+        }
+    }
+
+    void EmitSpills()
+    {
+        foreach (var spill in context.Current.SpillsBefore)
+        {
+            var suffix = spill.Temp.Type.GetAssemblySuffix();
+            var sized = spill.From.ToSized(spill.Temp.Type.GetWidth());
+            code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, {context.OffsetOf(spill.Temp)}({Register.rbp.ToName()})");
+        }
+    }
 
     // 引数レジスタを自フレームの Parameter スロットへ書き込む
     // 7 個目以降の引数は呼び出し元フレーム上 (16(%rbp) 以降) をそのまま参照する
@@ -316,37 +333,7 @@ public sealed class CodeGenerator
         var parameters = context.Function.Parameters;
         for (var i = 0; i < Math.Min(parameters.Count, registers.Count); i++)
         {
-            StoreOperand(registers[i], parameters[i]);
+            operands.Store(registers[i], parameters[i]);
         }
-    }
-
-
-    // --- Helper
-
-    // 定数は即値、変数は rbp 相対で読み込む。4 byte 以下は符号拡張して 64bit レジスタに載せる
-    void LoadOperand(Operand operand, Register register)
-    {
-        switch (operand)
-        {
-            case IntegerConstant constant:
-                code.AppendNewIndentedLine($"movq ${constant.Value}, {register.ToName()}");
-                break;
-            case Variable variable:
-                // bp から offset 分ずらしたアドレスの内容をレジスタにコピーする
-                var suffix = variable.Type.GetAssemblySuffix();
-                var instruction = suffix == 'q' ? "movq" : $"movs{suffix}q";
-                code.AppendNewIndentedLine($"{instruction} {context.OffsetOf(variable)}({Register.rbp.ToName()}), {register.ToName()}");
-                break;
-            default:
-                throw new NotSupportedException($"Unsupported Operand: {operand.GetType().Name}");
-        }
-    }
-
-    // レジスタを変数の幅に合わせた名前にし、rbp 相対で書き込む
-    void StoreOperand(Register source, Variable destination)
-    {
-        var suffix = destination.Type.GetAssemblySuffix();
-        var sized = source.ToSized(destination.Type.GetWidth());
-        code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, {context.OffsetOf(destination)}({Register.rbp.ToName()})");
     }
 }

@@ -13,6 +13,9 @@ public class StackFrame
     public required List<StackPiece> RegisterParameters { get; init; }
     public required List<StackPiece> LocalVariables { get; init; }
     public required List<StackPiece> TemporaryVariables { get; init; }
+    public List<Register> SavedRegisters { get; init; } = [];
+
+    public int SavedRegisterOffset(int index) => PreviousBasePointerOffset - 8 * (index + 1);
 
     public int Size
     {
@@ -43,7 +46,7 @@ public class StackFrame
             above += 8;
         }
 
-        var below = PreviousBasePointerOffset;
+        var below = PreviousBasePointerOffset - 8 * SavedRegisters.Count;
         foreach (var piece in RegisterParameters.Concat(LocalVariables).Concat(TemporaryVariables))
         {
             var width = Math.Max(piece.Width, 1);

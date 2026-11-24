@@ -5,14 +5,19 @@ namespace Chibikko.Backend;
 
 sealed class StackFrameTable(StackFramer stackFramer)
 {
-    readonly Dictionary<IrFunction, StackFrame> frames = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<IrFunction, (StackFrame Frame, AllocationResult Allocation)> frames = new(ReferenceEqualityComparer.Instance);
 
-    public StackFrame Get(IrFunction function)
+    public StackFrame Get(IrFunction function) => Resolve(function).Frame;
+
+    public AllocationResult AllocationOf(IrFunction function) => Resolve(function).Allocation;
+
+    (StackFrame Frame, AllocationResult Allocation) Resolve(IrFunction function)
     {
-        if (frames.TryGetValue(function, out var frame)) return frame;
+        if (frames.TryGetValue(function, out var entry)) return entry;
 
-        frame = stackFramer.GenerateStackFrameInfo(function);
-        frames[function] = frame;
-        return frame;
+        var allocation = new RegisterAllocator().Allocate(function);
+        entry = (stackFramer.GenerateStackFrameInfo(function, allocation), allocation);
+        frames[function] = entry;
+        return entry;
     }
 }
