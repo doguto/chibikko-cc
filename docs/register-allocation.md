@@ -1,229 +1,220 @@
 # レジスタ割り当て
 
-現状のレジスタ割り当ての手法と実装をまとめる。
+## ひとことで
 
-## 概要
+**基本ブロックの中だけ、変数をレジスタに置いて計算する。ブロックを出るときに、必要な変数だけメモリに戻す。**
 
-- **対象**: 一時変数（`Variable.IsTemporary`、名前を持たない Temp）のみ
-  - ローカル変数・引数は常にスタックフレーム上（`rbp` 相対）に置き、使用のたびにロード / ストアする
-- **単位**: 基本ブロック単位の局所的な割り当て
-  - Temp は 1 つの基本ブロック内で生成・消費される前提（ブロックを跨ぐと例外）
-- **手法**: Next-Use 情報に基づく貪欲な割り当て（ドラゴンブック §8.6 の `getReg` に相当）
-  - 命令を先頭から順に処理し、定義された Temp に空きレジスタを割り当てる
-  - 最後の使用を終えた Temp のレジスタは即座に解放する
-  - 空きが無ければ、次の使用が最も遠い Temp をスタックへ追い出す（Belady 方式）
+ドラゴンブック §8.6「単純なコード生成器」と同じ方式。
 
-## パイプライン上の位置
+## 用語
+
+| 用語 | 意味 |
+| --- | --- |
+| 基本ブロック | 途中に分岐も合流もない命令の並び。`if` や `while` の境目で区切られる |
+| Temp | IR が式の途中結果用に作る名前の無い変数（`%3` など）。1 つのブロック内で作られて使い切られる |
+| 名前付き変数 | ソースに書いたローカル変数・引数（`%0.a` など）。各自スタック上にスロット（置き場所）を持つ |
+| 生存している | その変数の今の値が、この先どこかで読まれる |
+| live-out | ブロックの出口で生存している変数の集合。生存変数解析（`LivenessAnalysis`）で求める |
+| 次の使用 | ブロック内でその変数が次に読まれる命令の位置。Next-Use 解析（`NextUseAnalysis`）で求める |
+| dirty | レジスタ上で書き換えたが、まだメモリに戻していない状態 |
+
+## 例で見る
+
+```c
+int main() {
+    int a = 1;
+    int b = 2;
+    int c = (a + b) * (a - b);
+    return c;
+}
+```
+
+変更前は、名前付き変数を使うたびにメモリを読み書きしていた。
+
+```asm
+movq $1, %rax
+movl %eax, -4(%rbp)        # a をメモリに書く
+movq $2, %rax
+movl %eax, -8(%rbp)        # b をメモリに書く
+movslq -4(%rbp), %r10      # a を読む
+movslq -8(%rbp), %rcx      # b を読む
+addq %rcx, %r10            # a + b
+movslq -4(%rbp), %r11      # また a を読む
+movslq -8(%rbp), %rcx      # また b を読む
+subq %rcx, %r11            # a - b
+imulq %r11, %r10
+movl %r10d, -12(%rbp)      # c をメモリに書く
+movslq -12(%rbp), %rax     # c を読む
+```
+
+今は、ブロック内では `a` と `b` をレジスタに置いたまま使う。`a`・`b`・`c` はどれも `return` の後では使われない（live-out でない）ので、メモリには一度も書かない。
+
+```asm
+movq %rbx, -8(%rbp)        # rbx を使うので退避
+movq $1, %r10              # a
+movq $2, %r11              # b
+movq %r10, %rbx
+addl %r11d, %ebx           # a + b（int なので 32bit 演算）
+subl %r11d, %r10d          # a - b（a はもう使わないので r10 を上書き）
+imull %r10d, %ebx          # c
+movq %rbx, %rax
+movq -8(%rbp), %rbx        # rbx を復元
+```
+
+変数用のメモリアクセスは 8 回から 0 回に減る。代わりに、r10・r11 が埋まって callee-saved の rbx を使うため、その退避と復元が 2 回入る。
+
+## 3 つのルール
+
+割り当ては、命令を先頭から 1 つずつ見ながら、次の 3 つを判断するだけ。
+
+### ① いつレジスタに載せるか
+
+**ブロック内でもう一度使うときだけ** 載せる。一度しか使わない変数は、メモリを直接読み書きする方が速い。
+
+| 場面 | 再使用あり | 再使用なし |
+| --- | --- | --- |
+| 変数を読む | メモリからレジスタに読み込む（Reload） | メモリを直接読む |
+| 変数に書く | レジスタに書く（dirty になる） | メモリに直接書く |
+
+Temp はスロットを持たないので、常にレジスタに載せる。
+
+### ② いつレジスタから下ろすか
+
+- **もう使わないとき**: そのレジスタを空ける
+- **レジスタが足りないとき**: 次に使うのが一番先の変数を追い出す
+- **関数呼び出し（Call）の直前**: r10・r11 は呼び出し先で壊されるので、そこにある名前付き変数を下ろす
+- **ブロックの出口**: すべての名前付き変数を下ろす
+
+### ③ 下ろすときにメモリへ書き戻すか
+
+**dirty で、かつこの先で値が読まれるときだけ** 書き戻す。
 
 ```mermaid
 flowchart LR
-    IR[IrFunction] --> RA
+    A[レジスタから下ろす] --> B{dirty?}
+    B -- no --> N[書き戻さない<br/>メモリの値と同じ]
+    B -- yes --> C{この先で読まれる?<br/>ブロック内で再使用<br/>または live-out}
+    C -- no --> N2[書き戻さない<br/>誰も読まない]
+    C -- yes --> W[書き戻す]
+```
 
-    subgraph RA[RegisterAllocator.Allocate]
+「この先で読まれるか」をブロックの外まで含めて判断できるのは、生存変数解析の live-out があるため。
+
+## 変数の状態
+
+名前付き変数はブロック内で 3 つの状態を行き来する。ブロックの入口では必ず「メモリ」から始まる。
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    メモリ --> レジスタ_同じ値: 読む（再使用あり）
+    メモリ --> レジスタ_最新: 書く（再使用あり）
+    レジスタ_同じ値 --> レジスタ_最新: 書く
+    レジスタ_同じ値 --> メモリ: 下ろす（書き戻し不要）
+    レジスタ_最新 --> メモリ: 下ろす（必要なら書き戻し）
+```
+
+| 状態 | レジスタ | メモリ |
+| --- | --- | --- |
+| メモリ | 無い | 最新 |
+| レジスタ（同じ値） | 最新 | 最新 |
+| レジスタ（最新）= dirty | 最新 | 古い |
+
+## 使うレジスタ
+
+| 種類 | レジスタ | 特徴 |
+| --- | --- | --- |
+| caller-saved | r10, r11 | 自由に使えるが、Call で壊される |
+| callee-saved | rbx, r12〜r15 | Call を跨いでも保たれる。使った分は関数の入口で退避し、出口で復元する |
+
+rax・rcx・rdx・引数レジスタ（rdi など）は使わない。除算（`idivq` が rax と rdx を使う）や関数呼び出し（戻り値が rax に入る、引数を rdi などに置く）で決まったレジスタを使う命令があり、そこと衝突しないようにするため。
+
+Call を跨いで生き続ける Temp には、最初から callee-saved を割り当てる。
+
+## 注意が必要なケース
+
+### 引数（Param）は Call まで解放しない
+
+`g(a, b)` は IR では次のようになる。
+
+```
+Param a
+Param b
+Call  g
+```
+
+コード生成は Call の時点でまとめて引数を並べる。このとき、各引数は **Param 時点で置かれていたレジスタ** から読む。
+
+もし `Param a` で a のレジスタ（r10）を空けると、`Param b` で b が r10 に読み込まれ、Call で a のつもりで r10 を読むと b の値になってしまう。そのため Param で使い終わった変数は、Call まで解放しない。
+
+### 演算は型の幅で行う
+
+演算命令のサフィックスとレジスタ名を、型の幅に合わせる。
+
+| 型 | 演算 | 例 |
+| --- | --- | --- |
+| `long` | 64bit（`q`） | `addq %r11, %rbx` / `cqto` + `idivq` |
+| `int` | 32bit（`l`） | `addl %r11d, %ebx` / `cltd` + `idivl` |
+| `char`・`bool` | 32bit（`l`）。C の整数昇格と同じく、読み込み時に `movsbl` で 32bit に広げる | `cmpl $0, %r10d` |
+
+レジスタ上の値は「型の演算幅の下位ビットだけが有効」として扱う。`int` を 64bit で計算すると、オーバーフロー時に 32bit で折り返さず、メモリに書いた場合と値が変わってしまう。32bit 命令で計算すれば自然に折り返し、さらに x86-64 では 32bit レジスタへの書き込みで上位 32bit が 0 になるため、上位にゴミも残らない。
+
+### 同じ命令で読み書きする変数
+
+`x = x + 1` のように 1 命令で同じ変数を読んで書く場合、読みと書きで同じレジスタを使う。1 命令の中で変数の置き場所は 1 つだけ、という前提をコード生成が持っているため。
+
+## 処理の流れ
+
+```mermaid
+flowchart TB
+    L[生存変数解析<br/>各ブロックの live-out を求める] --> B
+
+    subgraph B[ブロックごと]
         direction TB
-        NU[NextUseAnalysis<br/>ブロックごと] --> AI[AllocateInstruction<br/>命令ごと]
+        N[Next-Use 解析<br/>各変数の次の使用位置を求める] --> I
+        I[命令を先頭から 1 つずつ<br/>ルール ①②③ で割り当て] --> T
+        T[出口: dirty かつ live-out の変数を書き戻す<br/>すべての名前付き変数を下ろす]
     end
 
-    RA --> AR[AllocationResult]
-    AR --> SF[StackFramer<br/>スピル Temp のスロット<br/>callee-saved の退避領域]
-    AR --> CG[CodeGenerator<br/>OperandEmitter]
-    SF --> CG
+    B --> R[割り当て結果<br/>命令ごとの変数の置き場所<br/>命令の前に出す書き戻し・読み込み]
+    R --> C[コード生成<br/>置き場所に応じてレジスタ名か rbp 相対アドレスを出力]
 ```
+
+## ソースとの対応
 
 | ファイル | 役割 |
 | --- | --- |
-| `src/Backend/NextUseAnalysis.cs` | ブロック内の各命令時点での生存・次の使用位置を求める |
-| `src/Backend/RegisterAllocator.cs` | Temp ごとの配置（レジスタ / スタック）を命令単位で決定する |
-| `src/Backend/Type/Allocation.cs` | 割り当て結果の型（`Location` / `Spill` / `InstructionAllocation` / `AllocationResult`） |
-| `src/Backend/StackFramer.cs` | スピルした Temp と使用した callee-saved レジスタをスタックフレームに配置する |
-| `src/Backend/OperandEmitter.cs` | 割り当て結果を参照し、オペランドをレジスタ名または `rbp` 相対アドレスとして出力する |
+| `src/Common/Ir/LivenessAnalysis.cs` | live-out を求める |
+| `src/Backend/NextUseAnalysis.cs` | ブロック内での次の使用位置を求める。出口の初期状態に live-out を使う |
+| `src/Backend/RegisterAllocator.cs` | ルール ①②③ による割り当て |
+| `src/Backend/Type/Allocation.cs` | 割り当て結果の型 |
+| `src/Backend/CodeGenerator.cs` | 命令の前に書き戻し（`SpillsBefore`）と読み込み（`ReloadsBefore`）を出力する |
+| `src/Backend/OperandEmitter.cs` | 変数をレジスタ名または `offset(%rbp)` として出力する |
 
-## 割り当て対象のレジスタ
-
-```mermaid
-flowchart TB
-    subgraph ALLOC[割り当て対象]
-        CR["caller-saved<br/>r10, r11"]
-        CE["callee-saved<br/>rbx, r12, r13, r14, r15"]
-    end
-    subgraph RESERVED[割り当て対象外]
-        SC["作業用<br/>rax（演算・戻り値）<br/>rcx（第 2 オペランド）<br/>rdx（idiv の余り）"]
-        AR["引数渡し<br/>rdi, rsi, rdx, rcx, r8, r9"]
-        FP["フレーム<br/>rbp, rsp"]
-    end
-```
-
-- `RegisterGroup.CallerSavedAllocatableRegisters()` / `CalleeSavedAllocatableRegisters()` で定義
-- caller-saved は `call` で破壊されるため、Call を跨いで生存する Temp には使わない
-- callee-saved は使用した分だけ関数のプロローグで退避し、エピローグで復元する（`StackFrame.SavedRegisters`）
-
-## Next-Use 解析
-
-`NextUseAnalysis.Analyze(block)` はブロックの末尾から先頭へ命令を逆向きにたどり、各命令の各オペランドについて以下を記録する。
-
-- `IsLive`: その命令の後で生存しているか
-- `Position`: 次に使用される命令位置（ブロック内に無ければ `null`）
-
-初期状態（ブロック出口）は「名前付き変数は生存、Temp は死」とする。名前付き変数はブロックを跨ぎうるが、ブロック内解析では判断できないため保守的に生存とみなしている。
-
-```mermaid
-flowchart RL
-    T["Terminator<br/>使用: 生存・位置=n"] --> Q2["命令 i<br/>1. 現在の表をスナップショット<br/>2. 定義: 死・位置なし<br/>3. 使用: 生存・位置=i"]
-    Q2 --> Q1["命令 i-1"]
-    Q1 --> E[ブロック先頭]
-```
-
-同じ命令で使用と定義を兼ねる変数（`x = x + 1`）は、定義で「死」にしてから使用で「生存」に上書きするため、命令の直前では正しく生存となる。
-
-解析結果 `BlockNextUse` は以下を提供する。
-
-| メソッド | 内容 |
-| --- | --- |
-| `Of(quadruple).Of(variable)` | 命令時点でのオペランドの `NextUse` |
-| `OfTerminator()` | Terminator 時点での `NextUse` |
-| `LastUse(variable)` | ブロック内での最後の使用位置 |
-| `NextUseAfter(variable, position)` | `position` より後の最初の使用位置 |
-
-## 命令ごとの割り当て
-
-`RegisterAllocator` は以下の状態を関数全体で保持する。
+`RegisterAllocator` の主な状態:
 
 | フィールド | 内容 |
 | --- | --- |
-| `registerTable` | レジスタ → 現在そこに載っている Temp（レジスタ記述子） |
-| `locationTable` | Temp → 配置場所 `InRegister(reg)` / `OnStack`（アドレス記述子） |
-| `usedRegisters` | 一度でも使ったレジスタ（callee-saved の退避対象決定に使う） |
-| `spilledTemps` | スタックに置かれた Temp（スタックフレームにスロットを確保する） |
+| `registerTable` | 各レジスタに今どの変数が載っているか |
+| `locationTable` | 各変数が今どこにあるか（レジスタ / スタック） |
+| `dirtyVariables` | dirty な名前付き変数 |
+| `pendingArguments` | Param で使い終わったが、Call まで解放を待っている変数 |
 
-`AllocateInstruction` の処理順は以下のとおり。
+`RegisterAllocator` の主なメソッド:
 
-```mermaid
-flowchart TB
-    S([命令]) --> U[使用する Temp の配置を<br/>locationTable から取得]
-    U --> P{Source1 が Temp かつ<br/>この命令で最後の使用かつ<br/>レジスタ上?}
-    P -- yes --> PR[そのレジスタを preferred とする]
-    P -- no --> F
-    PR --> F[最後の使用を終えた<br/>Temp のレジスタを解放]
-    F --> D{定義先が Temp?}
-    D -- no --> R([InstructionAllocation])
-    D -- yes --> A{既に配置済み?}
-    A -- yes --> K
-    A -- no --> AS[Assign で配置を決定]
-    AS --> K[オペランドとして記録]
-    K --> DD{定義後に<br/>使用されない?}
-    DD -- yes --> FR[即座に解放]
-    DD -- no --> R
-    FR --> R
-```
+| メソッド | 内容 |
+| --- | --- |
+| `AllocateInstruction` | 1 命令分の割り当て。使用する変数の配置 → 不要になったレジスタの解放 → 定義先の配置の順に行う |
+| `LoadNamed` | ルール ①: 読む変数をレジスタに載せるか決める |
+| `Assign` | 定義先のレジスタを決める。空きが無ければ追い出す |
+| `IsReleasable` | ルール ②: もう下ろしてよいか |
+| `IsNeededInMemory` | ルール ③: 下ろすときに書き戻しが要るか |
+| `SpillCallerSaved` | Call の直前に r10・r11 上の名前付き変数を下ろす |
 
-使用 Temp の解放を定義先の割り当てより先に行うことで、`t3 = t1 + t2` のように最後の使用を終えた `t1` のレジスタを `t3` が再利用できる。`preferred` はこの再利用を優先させるためのもので、x86 の 2 オペランド形式（`addq src, dst`）で `Source1` と同じレジスタに結果を置けば `mov` を 1 つ省ける。
+## 今の限界
 
-### Assign: 配置場所の決定
-
-```mermaid
-flowchart TB
-    S([定義する Temp]) --> C{Call を跨いで<br/>生存する?}
-    C -- yes --> C1[候補 = callee-saved]
-    C -- no --> C2[候補 = caller-saved + callee-saved]
-    C1 --> P
-    C2 --> P{preferred が<br/>候補内かつ空き?}
-    P -- yes --> OK1([preferred を割り当て])
-    P -- no --> E{候補に空きがある?}
-    E -- yes --> OK2([先頭の空きを割り当て])
-    E -- no --> V{候補レジスタを<br/>使う Temp がいる?}
-    V -- no --> ST1([自身を OnStack])
-    V -- yes --> B[次の使用が最も遠い<br/>Temp を victim とする]
-    B --> CMP{自身の次の使用 ≥<br/>victim の次の使用?}
-    CMP -- yes --> ST2([自身を OnStack])
-    CMP -- no --> SP[victim をスピル<br/>Spill を記録し OnStack へ]
-    SP --> OK3([victim のレジスタを割り当て])
-```
-
-- **Call を跨ぐ判定**: 定義位置から `LastUse` までの間に `Call` 命令があるか
-- **victim の選択**: 現在レジスタにある Temp のうち `NextUseAfter` が最も遠いもの。自身の方が遠い場合は自身をスタックに置く
-- **スピル**: `Spill(victim, register)` を命令の `SpillsBefore` に記録し、コード生成時に命令の直前で `mov reg, offset(%rbp)` を出力する。以降 victim は `OnStack` として扱う
-
-## コード生成での利用
-
-```mermaid
-sequenceDiagram
-    participant CG as CodeGenerator
-    participant AR as AllocationResult
-    participant OE as OperandEmitter
-
-    CG->>AR: Of(quadruple)
-    AR-->>CG: InstructionAllocation
-    CG->>CG: context.Current に設定
-    CG->>CG: EmitSpills（SpillsBefore をストア）
-    CG->>OE: SourceOperand / Load / Store
-    OE->>OE: RegisterOf(Temp)
-    alt InRegister
-        OE-->>CG: レジスタ名を直接オペランドに使う
-    else OnStack または名前付き変数
-        OE-->>CG: offset(%rbp) を経由してロード / ストア
-    end
-```
-
-- 演算の出力先が Temp でレジスタに割り当てられていれば、そのレジスタ上で直接演算する
-- そうでなければ `rax` で演算し、結果を `Store` で書き戻す
-- `Param` は `PendingArguments` に命令時点の `InstructionAllocation` ごと積み、`Call` で引数レジスタへ配置する（Param 時点の配置を参照するため）
-
-## 例
-
-```c
-int f(int x) { return x; }
-int main() { int a = 1; int b = 2; int c = (a + b) * (a - b) + f(a); return c; }
-```
-
-```
-(Assign,   %0.a, 1:I32, _)
-(Assign,   %1.b, 2:I32, _)
-(Add,      %3,   %0.a,  %1.b)    %3 -> r10
-(Subtract, %4,   %0.a,  %1.b)    %4 -> r11
-(Multiply, %5,   %3,    %4)      %5 -> rbx（Call を跨ぐため callee-saved）、%3 %4 は解放
-(Param,    _,    %0.a,  _)
-(Call,     %6,   @f,    _)       %6 -> r10
-(Add,      %7,   %5,    %6)      %7 -> rbx（preferred: %5 のレジスタを再利用）
-(Assign,   %2.c, %7,    _)
-return %2.c
-```
-
-```asm
-main:
-	pushq %rbp
-	movq %rsp, %rbp
-	subq $32, %rsp
-	movq %rbx, -8(%rbp)       # 使用した callee-saved を退避
-	movq $1, %rax
-	movl %eax, -12(%rbp)      # a（名前付き変数はスタック）
-	movq $2, %rax
-	movl %eax, -16(%rbp)      # b
-	movslq -12(%rbp), %r10
-	movslq -16(%rbp), %rcx
-	addq %rcx, %r10           # %3 = a + b
-	movslq -12(%rbp), %r11
-	movslq -16(%rbp), %rcx
-	subq %rcx, %r11           # %4 = a - b
-	movq %r10, %rbx
-	imulq %r11, %rbx          # %5 = %3 * %4
-	movslq -12(%rbp), %rdi
-	movl $0, %eax
-	call f
-	movq %rax, %r10           # %6
-	addq %r10, %rbx           # %7 = %5 + %6
-	movl %ebx, -20(%rbp)      # c
-	movslq -20(%rbp), %rax
-	movq -8(%rbp), %rbx       # callee-saved を復元
-	movq %rbp, %rsp
-	popq %rbp
-	ret
-```
-
-## 制約と今後
-
-| 現状の制約 | 影響 | 改善案 |
+| 限界 | 影響 | 次の手 |
 | --- | --- | --- |
-| 名前付き変数（ローカル・引数）はレジスタに載らない | ループ変数なども毎回メモリを読み書きする（例の `a` は 3 回ロード） | 生存変数解析（`LivenessAnalysis`）に基づくグラフ彩色で関数全体を割り当てる |
-| 割り当てがブロック単位 | ブロックを跨ぐ値はメモリ経由になる | 同上 |
-| caller-saved が `r10` / `r11` の 2 本のみ | 引数レジスタ・作業用レジスタを割り当てに使えない | 作業用レジスタの使用を減らし、引数レジスタを Call 間で割り当て可能にする |
-| スピル先のスロットは Temp ごとに固定 | 生存範囲が重ならない Temp 同士でもスロットを共有しない | スタックスロットの彩色 |
+| ブロックを跨いでレジスタに置けない | `for` のように条件・本体・更新が別ブロックのループでは、ブロックを移るたびにメモリを経由するため効果が小さい | グラフ彩色で関数全体を割り当てる |
+| 使えるレジスタが 7 本だけ | 変数が多いとすぐ追い出しが起きる | 除算・Call で使うレジスタも、その命令を跨がない変数には割り当てる |
+| 再使用する変数を演算すると `mov` が増えることがある | x86 の演算は片方のオペランドを結果で上書きするため、元の値を残すコピーが要る | コピーを減らす最適化（コアレッシング） |
