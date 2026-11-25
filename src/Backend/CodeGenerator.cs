@@ -153,11 +153,11 @@ public sealed class CodeGenerator
         operands.Store(Register.rax, destination);
     }
 
-    void GenerateAdd(Quadruple quadruple) => GenerateArithmetic(quadruple, "addq");
+    void GenerateAdd(Quadruple quadruple) => GenerateArithmetic(quadruple, "add");
 
-    void GenerateSubtract(Quadruple quadruple) => GenerateArithmetic(quadruple, "subq");
+    void GenerateSubtract(Quadruple quadruple) => GenerateArithmetic(quadruple, "sub");
 
-    void GenerateMultiply(Quadruple quadruple) => GenerateArithmetic(quadruple, "imulq");
+    void GenerateMultiply(Quadruple quadruple) => GenerateArithmetic(quadruple, "imul");
 
     // Destination に割り当てたレジスタ (無ければ rax) を演算先とし、Source2 は即値・レジスタのまま使う
     // Source2 が演算先と同じレジスタにある場合は rax で演算する
@@ -169,22 +169,24 @@ public sealed class CodeGenerator
             : Register.rax;
 
         operands.Load(quadruple.Source1!, target);
-        code.AppendNewIndentedLine($"{instruction} {operands.SourceOperand(quadruple.Source2!)}, {target.ToName()}");
+        code.AppendNewIndentedLine($"{instruction}{destination.Type.GetOperationSuffix()} {operands.SourceOperand(quadruple.Source2!)}, {target.ToSized(destination.Type.GetOperationWidth()).ToName()}");
         if (target == Register.rax) operands.Store(Register.rax, destination);
     }
 
-    // Source1 を rax にロードし、cqto で rdx:rax に符号拡張してから idivq する
+    // Source1 を rax にロードし、rdx:rax (32bit なら edx:eax) に符号拡張してから idiv する
     // 商 (rax) を Destination に書き戻す
     void GenerateDivide(Quadruple quadruple)
     {
+        var destination = (quadruple.Destination as Variable)!;
+        var width = destination.Type.GetOperationWidth();
         operands.Load(quadruple.Source1!, Register.rax);
         var divisor = quadruple.Source2 is Variable variable && operands.RegisterOf(variable) is { } register
             ? register
             : Register.rcx;
         if (divisor == Register.rcx) operands.Load(quadruple.Source2!, Register.rcx);
-        code.AppendNewIndentedLine("cqto"); // rdx:rax に拡張し、溢れを防ぐ
-        code.AppendNewIndentedLine($"idivq {divisor.ToName()}"); // rax に商, rdx に余りが格納される
-        operands.Store(Register.rax, (quadruple.Destination as Variable)!);
+        code.AppendNewIndentedLine(width == 8 ? "cqto" : "cltd");
+        code.AppendNewIndentedLine($"idiv{destination.Type.GetOperationSuffix()} {divisor.ToSized(width).ToName()}"); // rax に商, rdx に余りが格納される
+        operands.Store(Register.rax, destination);
     }
 
     void GenerateNegate(Quadruple quadruple)
@@ -193,7 +195,7 @@ public sealed class CodeGenerator
         var target = operands.RegisterOf(destination) ?? Register.rax;
 
         operands.Load(quadruple.Source1!, target);
-        code.AppendNewIndentedLine($"negq {target.ToName()}");
+        code.AppendNewIndentedLine($"neg{destination.Type.GetOperationSuffix()} {target.ToSized(destination.Type.GetOperationWidth()).ToName()}");
         if (target == Register.rax) operands.Store(Register.rax, destination);
     }
 
@@ -209,7 +211,7 @@ public sealed class CodeGenerator
 
     void GenerateGreaterThanOrEqual(Quadruple quadruple) => GenerateComparison(quadruple, "setge");
 
-    // Source1 がレジスタ上にあればそのまま比較し、set* %al → movzbq で 0/1 を Destination に書き込む
+    // Source1 がレジスタ上にあればそのまま比較し、set* %al → movzbl で 0/1 を Destination に書き込む
     void GenerateComparison(Quadruple quadruple, string instruction)
     {
         var destination = (quadruple.Destination as Variable)!;
@@ -218,11 +220,12 @@ public sealed class CodeGenerator
             : Register.rax;
         if (left == Register.rax) operands.Load(quadruple.Source1!, Register.rax);
 
-        code.AppendNewIndentedLine($"cmpq {operands.SourceOperand(quadruple.Source2!)}, {left.ToName()}");
+        var type = OperandEmitter.TypeOf(quadruple.Source1!);
+        code.AppendNewIndentedLine($"cmp{type.GetOperationSuffix()} {operands.SourceOperand(quadruple.Source2!)}, {left.ToSized(type.GetOperationWidth()).ToName()}");
         code.AppendNewIndentedLine($"{instruction} {Register.al.ToName()}");
 
         var target = operands.RegisterOf(destination) ?? Register.rax;
-        code.AppendNewIndentedLine($"movzbq {Register.al.ToName()}, {target.ToName()}");
+        code.AppendNewIndentedLine($"movzbl {Register.al.ToName()}, {target.ToSized(4).ToName()}");
         if (target == Register.rax) operands.Store(Register.rax, destination);
     }
 
@@ -232,7 +235,7 @@ public sealed class CodeGenerator
         if (jump.Target != next) code.AppendNewIndentedLine($"jmp {BlockLabel(jump.Target)}");
     }
 
-    // 条件がレジスタ上になければ rax にロードし、cmpq $0 で比較する
+    // 条件がレジスタ上になければ rax にロードし、0 と比較する
     // 0 なら je で Else へ、そうでなければ Then へ進む。Then が次のブロックなら jmp を省略する
     void GenerateBranch(Branch branch, BasicBlock? next)
     {
@@ -241,7 +244,8 @@ public sealed class CodeGenerator
             : Register.rax;
         if (condition == Register.rax) operands.Load(branch.Condition, Register.rax);
 
-        code.AppendNewIndentedLine($"cmpq $0, {condition.ToName()}");
+        var type = OperandEmitter.TypeOf(branch.Condition);
+        code.AppendNewIndentedLine($"cmp{type.GetOperationSuffix()} $0, {condition.ToSized(type.GetOperationWidth()).ToName()}");
         code.AppendNewIndentedLine($"je {BlockLabel(branch.Else)}");
         if (branch.Then != next) code.AppendNewIndentedLine($"jmp {BlockLabel(branch.Then)}");
     }
@@ -317,12 +321,8 @@ public sealed class CodeGenerator
 
     void EmitSpills()
     {
-        foreach (var spill in context.Current.SpillsBefore)
-        {
-            var suffix = spill.Temp.Type.GetAssemblySuffix();
-            var sized = spill.From.ToSized(spill.Temp.Type.GetWidth());
-            code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, {context.OffsetOf(spill.Temp)}({Register.rbp.ToName()})");
-        }
+        foreach (var spill in context.Current.SpillsBefore) operands.StoreToStack(spill.From, spill.Variable);
+        foreach (var reload in context.Current.ReloadsBefore) operands.LoadFromStack(reload.Variable, reload.To);
     }
 
     // 引数レジスタを自フレームの Parameter スロットへ書き込む

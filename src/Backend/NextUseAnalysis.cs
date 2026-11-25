@@ -36,11 +36,10 @@ public sealed class BlockNextUse(
 }
 
 // TODO: 現状はレジスタ割り当て専用のため Backend に置いている
-// ブロック出口で名前付き変数を生存とみなす仮定はコード生成の書き戻し方針に依存する
-// 最適化パスから利用する場合や CFG 全体の生存変数解析を導入する場合は Common への移動を検討する
+// 最適化パスから利用する場合は Common への移動を検討する
 public static class NextUseAnalysis
 {
-    public static BlockNextUse Analyze(BasicBlock block)
+    public static BlockNextUse Analyze(BasicBlock block, IReadOnlySet<Variable> liveOut)
     {
         Dictionary<Variable, NextUse> table = new(ReferenceEqualityComparer.Instance);
         Dictionary<Quadruple, NextUseInfo> instructions = new(ReferenceEqualityComparer.Instance);
@@ -48,7 +47,7 @@ public static class NextUseAnalysis
         Dictionary<Variable, List<int>> usePositions = new(ReferenceEqualityComparer.Instance);
 
         var operands = block.Instructions.SelectMany(q => q.Def is { } def ? q.Uses.Append(def) : q.Uses).Concat(block.Terminator?.Uses ?? []);
-        foreach (var operand in operands) table[operand] = new NextUse(!operand.IsTemporary, null);
+        foreach (var operand in operands) table[operand] = new NextUse(liveOut.Contains(operand), null);
 
         var position = block.Instructions.Count;
         if (block.Terminator is { } blockTerminator)
