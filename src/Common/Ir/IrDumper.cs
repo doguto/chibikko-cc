@@ -49,6 +49,11 @@ public static class IrDumper
             builder.AppendLine($"    {names.Of(variable),-6} {variable.Type,-4} {kind}");
         }
 
+        var liveness = LivenessAnalysis.Analyze(function);
+        var variables = function.Parameters.Concat(function.Locals).ToList();
+        string LiveText(IReadOnlySet<Variable> live) =>
+            string.Join(", ", variables.Where(live.Contains).Select(v => names.Of(v)));
+
         builder.AppendLine("  body:");
         var rows = function.Blocks.SelectMany(b => b.Instructions).Select(q => QuadrupleFields(q, names)).ToList();
         var widths = Enumerable.Range(0, 3)
@@ -58,6 +63,7 @@ public static class IrDumper
         {
             var predecessors = block.Predecessors.Count == 0 ? "" : $"  ; preds = {string.Join(", ", block.Predecessors.Select(p => p.Name))}";
             builder.AppendLine($"  {block.Name}:{predecessors}");
+            builder.AppendLine($"    ; live-in = {{{LiveText(liveness.In(block))}}}");
             foreach (var quadruple in block.Instructions)
             {
                 var row = QuadrupleFields(quadruple, names);
@@ -65,6 +71,7 @@ public static class IrDumper
                 builder.AppendLine($"    ({string.Join(" ", aligned)} {row[3]})");
             }
             builder.AppendLine($"    {TerminatorText(block.Terminator, names)}");
+            builder.AppendLine($"    ; live-out = {{{LiveText(liveness.Out(block))}}}");
         }
     }
 
