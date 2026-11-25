@@ -47,13 +47,13 @@ public static class NextUseAnalysis
         NextUseInfo? terminator = null;
         Dictionary<Variable, List<int>> usePositions = new(ReferenceEqualityComparer.Instance);
 
-        var operands = block.Instructions.SelectMany(q => q.Uses().Concat(q.Defs())).Concat(block.Terminator?.Uses() ?? []);
+        var operands = block.Instructions.SelectMany(q => q.Def is { } def ? q.Uses.Append(def) : q.Uses).Concat(block.Terminator?.Uses ?? []);
         foreach (var operand in operands) table[operand] = new NextUse(!operand.IsTemporary, null);
 
         var position = block.Instructions.Count;
         if (block.Terminator is { } blockTerminator)
         {
-            var uses = blockTerminator.Uses().ToList();
+            var uses = blockTerminator.Uses.ToList();
             terminator = Record(table, uses);
             MarkUsed(table, uses, position);
         }
@@ -61,11 +61,11 @@ public static class NextUseAnalysis
         for (position--; position >= 0; position--)
         {
             var quadruple = block.Instructions[position];
-            var uses = quadruple.Uses().ToList();
-            var defs = quadruple.Defs().ToList();
+            var uses = quadruple.Uses.ToList();
+            var def = quadruple.Def;
 
-            instructions[quadruple] = Record(table, defs.Concat(uses));
-            foreach (var def in defs) table[def] = new NextUse(false, null);
+            instructions[quadruple] = Record(table, def is null ? uses : uses.Prepend(def));
+            if (def is not null) table[def] = new NextUse(false, null);
             MarkUsed(table, uses, position);
         }
 
@@ -77,9 +77,9 @@ public static class NextUseAnalysis
 
         for (var i = 0; i < block.Instructions.Count; i++)
         {
-            foreach (var use in block.Instructions[i].Uses()) AddUsePosition(usePositions, use, i);
+            foreach (var use in block.Instructions[i].Uses) AddUsePosition(usePositions, use, i);
         }
-        foreach (var use in block.Terminator?.Uses() ?? [])
+        foreach (var use in block.Terminator?.Uses ?? [])
         {
             AddUsePosition(usePositions, use, block.Instructions.Count);
         }

@@ -28,10 +28,10 @@ public static class LivenessAnalysis
             HashSet<Variable> def = new(ReferenceEqualityComparer.Instance);
             foreach (var quadruple in block.Instructions)
             {
-                use.UnionWith(quadruple.Uses().Where(v => !def.Contains(v)));
-                def.UnionWith(quadruple.Defs());
+                use.UnionWith(quadruple.Uses.Where(v => !def.Contains(v)));
+                if (quadruple.Def is { } destination) def.Add(destination);
             }
-            use.UnionWith(block.Terminator?.Uses().Where(v => !def.Contains(v)) ?? []);
+            use.UnionWith(block.Terminator?.Uses.Where(v => !def.Contains(v)) ?? []);
 
             uses[block] = use;
             defs[block] = def;
@@ -62,13 +62,13 @@ public static class LivenessAnalysis
         foreach (var block in function.Blocks)
         {
             HashSet<Variable> live = new(liveOut[block], ReferenceEqualityComparer.Instance);
-            live.UnionWith(block.Terminator?.Uses() ?? []);
+            live.UnionWith(block.Terminator?.Uses ?? []);
             for (var i = block.Instructions.Count - 1; i >= 0; i--)
             {
                 var quadruple = block.Instructions[i];
                 instructionLiveOut[quadruple] = new(live, ReferenceEqualityComparer.Instance);
-                live.ExceptWith(quadruple.Defs());
-                live.UnionWith(quadruple.Uses());
+                if (quadruple.Def is { } def) live.Remove(def);
+                live.UnionWith(quadruple.Uses);
             }
         }
 
