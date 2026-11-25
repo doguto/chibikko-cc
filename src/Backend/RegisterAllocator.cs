@@ -39,8 +39,8 @@ public sealed class RegisterAllocator(
                 var quadruple = block.Instructions[position];
                 instructions[quadruple] = AllocateInstruction(
                     quadruple.Source1,
-                    quadruple.Uses(),
-                    quadruple.Defs(),
+                    quadruple.Uses,
+                    quadruple.Def,
                     nextUses.Of(quadruple),
                     nextUses,
                     calls,
@@ -52,8 +52,8 @@ public sealed class RegisterAllocator(
             {
                 terminators[block] = AllocateInstruction(
                     null,
-                    terminator.Uses(),
-                    [],
+                    terminator.Uses,
+                    null,
                     nextUses.OfTerminator(),
                     nextUses,
                     calls,
@@ -73,7 +73,7 @@ public sealed class RegisterAllocator(
     InstructionAllocation AllocateInstruction(
         Operand? source1,
         IEnumerable<Variable> uses,
-        IEnumerable<Variable> defs,
+        Variable? def,
         NextUseInfo nextUse,
         BlockNextUse nextUses,
         List<int> calls,
@@ -102,7 +102,7 @@ public sealed class RegisterAllocator(
             if (!nextUse.Of(use).IsLive) Free(use);
         }
 
-        foreach (var def in defs.Where(x => x.IsTemporary))
+        if (def is { IsTemporary: true })
         {
             if (!locationTable.ContainsKey(def))
             {
