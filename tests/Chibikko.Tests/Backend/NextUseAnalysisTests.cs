@@ -9,6 +9,9 @@ public class NextUseAnalysisTests
     static IrFunction Main(string body) =>
         new FrontendPipeline().Run($"int main() {{ {body} }}").Functions.Single(f => f.Name == "main");
 
+    static BlockNextUse Analyze(BasicBlock block, params Variable[] liveOut) =>
+        NextUseAnalysis.Analyze(block, liveOut.ToHashSet());
+
     static Quadruple Find(BasicBlock block, OperationType operationType) =>
         block.Instructions.Single(q => q.OperationType == operationType);
 
@@ -16,7 +19,7 @@ public class NextUseAnalysisTests
     public void Temporary_IsDeadAfterLastUse()
     {
         var entry = Main("int a = 1; int b = 2; int c = 3; int x = (a + b) * c; return x;").Blocks[0];
-        var result = NextUseAnalysis.Analyze(entry);
+        var result = Analyze(entry);
 
         var add = Find(entry, OperationType.Add);
         var multiply = Find(entry, OperationType.Multiply);
@@ -27,22 +30,33 @@ public class NextUseAnalysisTests
     }
 
     [Fact]
-    public void NamedVariable_IsLiveOnExitWithoutNextUse()
+    public void LiveOutVariable_IsLiveWithoutNextUse()
     {
         var entry = Main("int a = 1; int b = 2; int x = a + b; return x;").Blocks[0];
-        var result = NextUseAnalysis.Analyze(entry);
+        var add = Find(entry, OperationType.Add);
+        var a = (Variable)add.Source1!;
+        var result = Analyze(entry, a);
+
+        Assert.Equal(new NextUse(true, null), result.Of(add).Of(a));
+    }
+
+    [Fact]
+    public void NamedVariable_IsDeadAfterLastUse_WhenNotLiveOut()
+    {
+        var entry = Main("int a = 1; int b = 2; int x = a + b; return x;").Blocks[0];
+        var result = Analyze(entry);
 
         var add = Find(entry, OperationType.Add);
         var a = (Variable)add.Source1!;
 
-        Assert.Equal(new NextUse(true, null), result.Of(add).Of(a));
+        Assert.Equal(new NextUse(false, null), result.Of(add).Of(a));
     }
 
     [Fact]
     public void TerminatorUse_IsRecordedAtLastPosition()
     {
         var entry = Main("int a = 1; int b = 2; return a + b;").Blocks[0];
-        var result = NextUseAnalysis.Analyze(entry);
+        var result = Analyze(entry);
 
         var add = Find(entry, OperationType.Add);
         var t = (Variable)add.Destination!;
@@ -56,7 +70,7 @@ public class NextUseAnalysisTests
     {
         var function = Main("int i = 0; while (i < 3) { i = i + 1; } return i;");
         var condition = function.Blocks.Single(b => b.Name == "while.cond");
-        var result = NextUseAnalysis.Analyze(condition);
+        var result = Analyze(condition);
 
         var lessThan = Find(condition, OperationType.LessThan);
         var t = (Variable)lessThan.Destination!;
@@ -78,11 +92,11 @@ public class NextUseAnalysisTests
         block.Instructions.Add(increment);
         block.SetTerminator(new Return(y));
 
-        var result = NextUseAnalysis.Analyze(block);
+        var result = Analyze(block);
 
         Assert.Equal(new NextUse(true, 1), result.Of(copy).Of(x));
         Assert.Equal(new NextUse(true, 2), result.Of(copy).Of(y));
-        Assert.Equal(new NextUse(true, null), result.Of(increment).Of(x));
+        Assert.Equal(new NextUse(false, null), result.Of(increment).Of(x));
     }
 
     [Fact]
@@ -92,6 +106,6 @@ public class NextUseAnalysisTests
         BasicBlock block = new("entry");
         block.SetTerminator(new Return(t));
 
-        Assert.Throws<InvalidOperationException>(() => NextUseAnalysis.Analyze(block));
+        Assert.Throws<InvalidOperationException>(() => Analyze(block));
     }
 }

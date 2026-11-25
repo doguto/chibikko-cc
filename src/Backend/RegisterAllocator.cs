@@ -3,6 +3,8 @@ using Chibikko.Common.Ir;
 
 namespace Chibikko.Backend;
 
+// 名前付き変数はブロック入口でメモリ上にあるものとし、ブロック内でのみレジスタに載せる
+// レジスタ上で書き換えた (dirty) 変数は、追い出し時・Call 前・ブロック出口で必要な場合のみメモリへ書き戻す
 public sealed class RegisterAllocator(
     IReadOnlyList<Register> callerSavedRegisters,
     IReadOnlyList<Register> calleeSavedRegisters
@@ -10,8 +12,14 @@ public sealed class RegisterAllocator(
 {
     readonly Dictionary<Register, Variable> registerTable = new();
     readonly Dictionary<Variable, Location> locationTable = new(ReferenceEqualityComparer.Instance);
+    readonly HashSet<Variable> dirtyVariables = new(ReferenceEqualityComparer.Instance);
     readonly HashSet<Register> usedRegisters = [];
     readonly HashSet<Variable> spilledTemps = new(ReferenceEqualityComparer.Instance);
+    readonly List<Variable> pendingArguments = [];
+
+    BlockNextUse nextUses = null!;
+    IReadOnlySet<Variable> liveOut = null!;
+    List<int> calls = [];
 
     public RegisterAllocator() : this(
         RegisterGroup.CallerSavedAllocatableRegisters(),
@@ -24,11 +32,13 @@ public sealed class RegisterAllocator(
     {
         Dictionary<Quadruple, InstructionAllocation> instructions = new(ReferenceEqualityComparer.Instance);
         Dictionary<BasicBlock, InstructionAllocation> terminators = new(ReferenceEqualityComparer.Instance);
+        var liveness = LivenessAnalysis.Analyze(function);
 
         foreach (var block in function.Blocks)
         {
-            var nextUses = NextUseAnalysis.Analyze(block);
-            var calls = block.Instructions
+            liveOut = liveness.Out(block);
+            nextUses = NextUseAnalysis.Analyze(block, liveOut);
+            calls = block.Instructions
                 .Select((quadruple, position) => (quadruple, position))
                 .Where(x => x.quadruple.OperationType == OperationType.Call)
                 .Select(x => x.position)
@@ -37,30 +47,37 @@ public sealed class RegisterAllocator(
             for (var position = 0; position < block.Instructions.Count; position++)
             {
                 var quadruple = block.Instructions[position];
+                List<Spill> spills = quadruple.OperationType == OperationType.Call
+                    ? SpillCallerSaved(position)
+                    : [];
                 instructions[quadruple] = AllocateInstruction(
-                    quadruple.Source1,
+                    quadruple,
                     quadruple.Uses,
-                    quadruple.Def,
                     nextUses.Of(quadruple),
-                    nextUses,
-                    calls,
-                    position
+                    position,
+                    spills
                 );
             }
 
             if (block.Terminator is { } terminator)
             {
+                var writebacks = registerTable
+                    .Where(x => dirtyVariables.Contains(x.Value) && liveOut.Contains(x.Value))
+                    .Select(x => new Spill(x.Value, x.Key))
+                    .ToList();
                 terminators[block] = AllocateInstruction(
                     null,
                     terminator.Uses,
-                    null,
                     nextUses.OfTerminator(),
-                    nextUses,
-                    calls,
-                    block.Instructions.Count
+                    block.Instructions.Count,
+                    writebacks
                 );
             }
 
+            foreach (var named in registerTable.Where(x => !x.Value.IsTemporary).ToList())
+            {
+                Release(named.Key, named.Value);
+            }
             if (registerTable.Count != 0)
             {
                 throw new InvalidOperationException($"temporary variable is live on exit from block: {block.Name}");
@@ -71,113 +88,183 @@ public sealed class RegisterAllocator(
     }
 
     InstructionAllocation AllocateInstruction(
-        Operand? source1,
+        Quadruple? quadruple,
         IEnumerable<Variable> uses,
-        Variable? def,
         NextUseInfo nextUse,
-        BlockNextUse nextUses,
-        List<int> calls,
-        int position
+        int position,
+        List<Spill> spills
     )
     {
+        var def = quadruple?.Def;
         Dictionary<Variable, Location> operands = new(ReferenceEqualityComparer.Instance);
-        List<Spill> spills = [];
+        List<Reload> reloads = [];
 
-        var temporaryUses = uses.Where(x => x.IsTemporary).ToList();
-        foreach (var use in temporaryUses)
+        foreach (var use in uses.Distinct())
         {
-            operands[use] = locationTable.TryGetValue(use, out var location)
-                ? location
-                : throw new InvalidOperationException("temporary variable is used before definition");
+            if (locationTable.TryGetValue(use, out var location))
+            {
+                operands[use] = location;
+            }
+            else if (use.IsTemporary)
+            {
+                throw new InvalidOperationException("temporary variable is used before definition");
+            }
+            else
+            {
+                operands[use] = LoadNamed(use, nextUse.Of(use), reloads);
+            }
         }
 
-        var preferred = source1 is Variable { IsTemporary: true } first
-            && !nextUse.Of(first).IsLive
-            && locationTable[first] is InRegister { Register: var firstRegister }
+        var preferred = quadruple?.Source1 is Variable first
+            && first != def
+            && operands[first] is InRegister { Register: var firstRegister }
+            && IsReleasable(first, nextUse.Of(first))
                 ? firstRegister
                 : (Register?)null;
 
-        foreach (var use in temporaryUses)
+        // Call 時に Param 時点の配置から引数を読むため、Param のオペランドは Call まで解放しない
+        var releasables = operands.Keys.Where(x => x != def && IsReleasable(x, nextUse.Of(x))).ToList();
+        if (quadruple?.OperationType == OperationType.Param)
         {
-            if (!nextUse.Of(use).IsLive) Free(use);
+            pendingArguments.AddRange(releasables);
+        }
+        else
+        {
+            releasables.ForEach(Free);
+        }
+        if (quadruple?.OperationType == OperationType.Call)
+        {
+            pendingArguments.ForEach(Free);
+            pendingArguments.Clear();
         }
 
-        if (def is { IsTemporary: true })
+        if (def is not null)
         {
-            if (!locationTable.ContainsKey(def))
-            {
-                var crossesCall = nextUses.LastUse(def) is { } lastUse && calls.Any(p => position < p && p < lastUse);
-                locationTable[def] = Assign(def, nextUse.Of(def), nextUses, position, crossesCall, preferred, spills);
-            }
-            operands[def] = locationTable[def];
-            if (!nextUse.Of(def).IsLive) Free(def);
+            var location = operands.GetValueOrDefault(def)
+                ?? (locationTable.GetValueOrDefault(def) as InRegister)
+                ?? (def.IsTemporary || nextUse.Of(def).Position is not null
+                    ? Assign(def, nextUse.Of(def), position, preferred, spills)
+                    : new OnStack());
+
+            if (!def.IsTemporary && location is InRegister) dirtyVariables.Add(def);
+            operands[def] = location;
+            if (IsReleasable(def, nextUse.Of(def))) Free(def);
         }
 
-        return new InstructionAllocation(operands, spills);
+        return new InstructionAllocation(operands, spills, reloads);
+    }
+
+    Location LoadNamed(Variable variable, NextUse nextUse, List<Reload> reloads)
+    {
+        if (nextUse.Position is null) return new OnStack();
+
+        var free = callerSavedRegisters.Concat(calleeSavedRegisters)
+            .Where(r => !registerTable.ContainsKey(r))
+            .Cast<Register?>()
+            .FirstOrDefault();
+        if (free is not { } register) return new OnStack();
+
+        reloads.Add(new Reload(variable, register));
+        return Occupy(register, variable);
     }
 
     Location Assign(
-        Variable temp,
+        Variable variable,
         NextUse nextUse,
-        BlockNextUse nextUses,
         int position,
-        bool crossesCall,
         Register? preferred,
         List<Spill> spills
     )
     {
+        var crossesCall = variable.IsTemporary
+            && nextUses.LastUse(variable) is { } lastUse
+            && calls.Any(p => position < p && p < lastUse);
         var candidates = crossesCall
             ? calleeSavedRegisters
             : callerSavedRegisters.Concat(calleeSavedRegisters).ToList();
 
         if (preferred is { } reusable && candidates.Contains(reusable) && !registerTable.ContainsKey(reusable))
         {
-            return Occupy(reusable, temp);
+            return Occupy(reusable, variable);
         }
 
         var free = candidates.Where(r => !registerTable.ContainsKey(r)).Cast<Register?>().FirstOrDefault();
-        if (free is { } register) return Occupy(register, temp);
+        if (free is { } register) return Occupy(register, variable);
 
         var victims = registerTable.Where(x => candidates.Contains(x.Key)).ToList();
-        if (victims.Count == 0)
-        {
-            spilledTemps.Add(temp);
-            return new OnStack();
-        }
+        if (victims.Count == 0) return PlaceOnStack(variable);
 
         var victim = victims
             .Select(x => (
                 Register: x.Key,
-                Temp: x.Value,
+                Variable: x.Value,
                 Position: nextUses.NextUseAfter(x.Value, position) ?? int.MaxValue
             ))
             .MaxBy(x => x.Position);
 
-        if ((nextUse.Position ?? int.MaxValue) >= victim.Position)
-        {
-            spilledTemps.Add(temp);
-            return new OnStack();
-        }
+        if ((nextUse.Position ?? int.MaxValue) >= victim.Position) return PlaceOnStack(variable);
 
-        spills.Add(new Spill(victim.Temp, victim.Register));
-        spilledTemps.Add(victim.Temp);
-        locationTable[victim.Temp] = new OnStack();
-        registerTable.Remove(victim.Register);
-        return Occupy(victim.Register, temp);
+        if (IsNeededInMemory(victim.Variable, position)) spills.Add(new Spill(victim.Variable, victim.Register));
+        if (victim.Variable.IsTemporary)
+        {
+            spilledTemps.Add(victim.Variable);
+            locationTable[victim.Variable] = new OnStack();
+            registerTable.Remove(victim.Register);
+        }
+        else
+        {
+            Release(victim.Register, victim.Variable);
+        }
+        return Occupy(victim.Register, variable);
     }
 
-    Location Occupy(Register register, Variable temp)
+    List<Spill> SpillCallerSaved(int position)
     {
-        registerTable[register] = temp;
+        List<Spill> spills = [];
+        foreach (var (register, variable) in registerTable.Where(x => !x.Value.IsTemporary && callerSavedRegisters.Contains(x.Key)).ToList())
+        {
+            if (IsNeededInMemory(variable, position)) spills.Add(new Spill(variable, register));
+            Release(register, variable);
+        }
+        return spills;
+    }
+
+    bool IsNeededInMemory(Variable variable, int position) =>
+        variable.IsTemporary
+        || dirtyVariables.Contains(variable) && (nextUses.NextUseAfter(variable, position) is not null || liveOut.Contains(variable));
+
+    bool IsReleasable(Variable variable, NextUse nextUse) =>
+        nextUse.Position is null && !(nextUse.IsLive && dirtyVariables.Contains(variable));
+
+    Location PlaceOnStack(Variable variable)
+    {
+        if (!variable.IsTemporary) return new OnStack();
+
+        spilledTemps.Add(variable);
+        return locationTable[variable] = new OnStack();
+    }
+
+    Location Occupy(Register register, Variable variable)
+    {
+        registerTable[register] = variable;
+        locationTable[variable] = new InRegister(register);
         usedRegisters.Add(register);
         return new InRegister(register);
     }
 
-    void Free(Variable temp)
+    void Release(Register register, Variable variable)
     {
-        if (locationTable.GetValueOrDefault(temp) is not InRegister { Register: var register }) return;
-        if (registerTable.GetValueOrDefault(register) != temp) return;
-
         registerTable.Remove(register);
+        locationTable.Remove(variable);
+        dirtyVariables.Remove(variable);
+    }
+
+    void Free(Variable variable)
+    {
+        if (locationTable.GetValueOrDefault(variable) is not InRegister { Register: var register }) return;
+        if (registerTable.GetValueOrDefault(register) != variable) return;
+
+        if (variable.IsTemporary) registerTable.Remove(register);
+        else Release(register, variable);
     }
 }

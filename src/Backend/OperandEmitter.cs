@@ -7,7 +7,7 @@ namespace Chibikko.Backend;
 
 sealed class OperandEmitter(StringBuilder code, FunctionCodegenContext context)
 {
-    // 定数は即値、変数は rbp 相対で読み込む。4 byte 以下は符号拡張して 64bit レジスタに載せる
+    // 定数は即値、変数は rbp 相対で読み込む。レジスタは型の演算幅の下位ビットのみ有効とする
     public void Load(Operand operand, Register register, InstructionAllocation? allocation = null)
     {
         if (operand is Variable temp && RegisterOf(temp, allocation) is { } source)
@@ -22,31 +22,43 @@ sealed class OperandEmitter(StringBuilder code, FunctionCodegenContext context)
                 code.AppendNewIndentedLine($"movq ${constant.Value}, {register.ToName()}");
                 break;
             case Variable variable:
-                // bp から offset 分ずらしたアドレスの内容をレジスタにコピーする
-                var suffix = variable.Type.GetAssemblySuffix();
-                var instruction = suffix == 'q' ? "movq" : $"movs{suffix}q";
-                code.AppendNewIndentedLine($"{instruction} {context.OffsetOf(variable)}({Register.rbp.ToName()}), {register.ToName()}");
+                LoadFromStack(variable, register);
                 break;
             default:
                 throw new NotSupportedException($"Unsupported Operand: {operand.GetType().Name}");
         }
     }
 
-    // レジスタ上の Temp には 64bit のまま転送し、それ以外は変数の幅に合わせて rbp 相対で書き込む
+    // bp から offset 分ずらしたアドレスの内容をレジスタにコピーする
+    // 4 byte 未満は 32bit に符号拡張して読み込む
+    public void LoadFromStack(Variable variable, Register register)
+    {
+        var suffix = variable.Type.GetAssemblySuffix();
+        var instruction = suffix is 'q' or 'l' ? $"mov{suffix}" : $"movs{suffix}l";
+        var target = register.ToSized(variable.Type.GetOperationWidth());
+        code.AppendNewIndentedLine($"{instruction} {context.OffsetOf(variable)}({Register.rbp.ToName()}), {target.ToName()}");
+    }
+
+    // レジスタ上の変数には 64bit のまま転送し、それ以外は変数の幅に合わせて rbp 相対で書き込む
     public void Store(Register source, Variable destination)
     {
-        var suffix = destination.Type.GetAssemblySuffix();
-        var sized = source.ToSized(destination.Type.GetWidth());
         if (RegisterOf(destination) is { } target)
         {
             if (source != target) code.AppendNewIndentedLine($"movq {source.ToName()}, {target.ToName()}");
             return;
         }
+        StoreToStack(source, destination);
+    }
+
+    public void StoreToStack(Register source, Variable destination)
+    {
+        var suffix = destination.Type.GetAssemblySuffix();
+        var sized = source.ToSized(destination.Type.GetWidth());
         code.AppendNewIndentedLine($"mov{suffix} {sized.ToName()}, {context.OffsetOf(destination)}({Register.rbp.ToName()})");
     }
 
     public Register? RegisterOf(Variable variable, InstructionAllocation? allocation = null) =>
-        variable.IsTemporary && (allocation ?? context.Current).Of(variable) is InRegister { Register: var register }
+        (allocation ?? context.Current).Of(variable) is InRegister { Register: var register }
             ? register
             : null;
 
@@ -55,17 +67,25 @@ sealed class OperandEmitter(StringBuilder code, FunctionCodegenContext context)
 
     public string SourceOperand(Operand operand)
     {
+        var width = TypeOf(operand).GetOperationWidth();
         switch (operand)
         {
             case IntegerConstant constant when constant.Value is >= int.MinValue and <= int.MaxValue:
                 return $"${constant.Value}";
             case Variable variable when RegisterOf(variable) is { } register:
-                return register.ToName();
-            case Variable { Type: IrType.I64 } variable:
+                return register.ToSized(width).ToName();
+            case Variable variable when variable.Type.GetWidth() == width:
                 return $"{context.OffsetOf(variable)}({Register.rbp.ToName()})";
             default:
                 Load(operand, Register.rcx);
-                return Register.rcx.ToName();
+                return Register.rcx.ToSized(width).ToName();
         }
     }
+
+    public static IrType TypeOf(Operand operand) => operand switch
+    {
+        Variable variable => variable.Type,
+        Constant constant => constant.Type,
+        _ => throw new NotSupportedException($"Unsupported Operand: {operand.GetType().Name}"),
+    };
 }

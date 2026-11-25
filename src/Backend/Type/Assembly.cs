@@ -16,4 +16,9 @@ public static class AssemblySuffix
             _ => throw new Exception($"Unsupported IrType Width: {irType.GetWidth()}")
         };
     }
+
+    // 4 byte 未満の整数は C の整数昇格に合わせて 32bit で演算する
+    public static int GetOperationWidth(this IrType irType) => irType.GetWidth() == 8 ? 8 : 4;
+
+    public static char GetOperationSuffix(this IrType irType) => irType.GetWidth() == 8 ? 'q' : 'l';
 }
